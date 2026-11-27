@@ -1,0 +1,79 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            cmake_args: ""
+          - name: macOS
+            os: macos-latest
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          - name: Linux (Tests + Screenshot)
+            os: ubuntu-24.04
+            cmake_args: -G Ninja
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build xvfb libasound2-dev libjack-jackd2-dev libx11-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxcomposite-dev libxext-dev \
+            libfreetype-dev libfontconfig1-dev libegl-dev libgl-dev fonts-dejavu-core
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      # ---- packaging -------------------------------------------------------
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "build/src/app/SMStudio_artefacts/Release/SM Studio.exe" dist/
+          Copy-Item LICENSE.md dist/
+          Copy-Item README.md dist/
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          codesign --force --deep --sign - "build/src/app/SMStudio_artefacts/Release/SM Studio.app"
+          ditto -c -k --keepParent "build/src/app/SMStudio_artefacts/Release/SM Studio.app" "dist/SM Studio.app.zip"
+          cp LICENSE.md README.md dist/
+
+      - name: Screenshot (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          xvfb-run -a "build/src/app/SMStudio_artefacts/Release/SM Studio" --screenshot dist/screenshot.png --show console
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SM-Studio-${{ runner.os }}
+          path: dist/
+          retention-days: 30

@@ -1,0 +1,240 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+#include "core/Commands.h"
+
+namespace sms
+{
+
+using namespace commands;
+using Param = SetTrackParam::Param;
+
+static Track makeTrack (Song& s, const juce::String& name)
+{
+    Track t;
+    t.id = s.newId();
+    t.typeId = "audio";
+    t.name = name;
+    return t;
+}
+
+//==============================================================================
+class MusicalTimeTests final : public juce::UnitTest
+{
+public:
+    MusicalTimeTests() : juce::UnitTest ("Musical time", "SMStudio") {}
+
+    void runTest() override
+    {
+        TempoMap map;
+
+        beginTest ("ticks <-> seconds at 120 bpm");
+        expectWithinAbsoluteError (map.ticksToSeconds (ticksPerQuarter), 0.5, 1e-9);
+        expectEquals ((long long) map.secondsToTicks (2.0), (long long) (ticksPerQuarter * 4));
+
+        beginTest ("bars/beats in 4/4");
+        auto bb = map.ticksToBarsBeats (map.getTicksPerBar() * 2 + ticksPerQuarter + 240 + 10);
+        expectEquals (bb.bar, 3);
+        expectEquals (bb.beat, 2);
+        expectEquals (bb.sixteenth, 2);
+        expectEquals (bb.ticks, 10);
+        expectEquals (bb.toString(), juce::String ("3.2.2.010"));
+        expectEquals ((long long) map.barsBeatsToTicks (bb), (long long) (map.getTicksPerBar() * 2 + ticksPerQuarter + 250));
+
+        beginTest ("6/8 and tempo limits");
+        map.setTimeSignature ({ 6, 8 });
+        expectEquals ((long long) map.getTicksPerBeat(), (long long) (ticksPerQuarter / 2));
+        expectEquals ((long long) map.getTicksPerBar(), (long long) (ticksPerQuarter * 3));
+        map.setTimeSignature ({ 3, 5 }); // denominator rounded to a power of two
+        expectEquals (map.getTimeSignature().denominator, 8);
+        map.setTempo (5000.0);
+        expectEquals (map.getTempo(), TempoMap::maxTempo);
+
+        beginTest ("seconds formatting");
+        expectEquals (formatSeconds (3725.5), juce::String ("1:02:05.500"));
+    }
+};
+
+//==============================================================================
+class ModelAndUndoTests final : public juce::UnitTest
+{
+public:
+    ModelAndUndoTests() : juce::UnitTest ("Model and undo", "SMStudio") {}
+
+    void runTest() override
+    {
+        beginTest ("ids are unique and never reused");
+        {
+            Song s;
+            auto a = s.newId(), b = s.newId();
+            expect (a.isValid() && b.isValid() && a != b);
+            s.getIds().reserveUpTo (100);
+            expect (s.newId().value == 101);
+        }
+
+        beginTest ("add / remove track with undo and redo");
+        {
+            Song s;
+            CommandHistory h (s);
+            auto t1 = makeTrack (s, "A");
+            auto t2 = makeTrack (s, "B");
+            const auto id1 = t1.id, id2 = t2.id;
+
+            expect (h.perform (std::make_unique<AddTrack> (std::move (t1))));
+            expect (h.perform (std::make_unique<AddTrack> (std::move (t2), 0)));
+            expectEquals (s.getNumTracks(), 2);
+            expect (s.getTracks()[0].id == id2);
+
+            expect (h.perform (std::make_unique<RemoveTrack> (id2)));
+            expectEquals (s.getNumTracks(), 1);
+
+            expect (h.undo());
+            expectEquals (s.getNumTracks(), 2);
+            expect (s.getTracks()[0].id == id2); // restored at its old index
+
+            expect (h.undo());
+            expect (h.undo());
+            expectEquals (s.getNumTracks(), 0);
+            expect (! h.canUndo());
+
+            expect (h.redo());
+            expect (h.redo());
+            expect (h.redo());
+            expectEquals (s.getNumTracks(), 1);
+            expect (s.getTracks()[0].id == id1);
+        }
+
+        beginTest ("commands that change nothing are not recorded");
+        {
+            Song s;
+            CommandHistory h (s);
+            auto t = makeTrack (s, "A");
+            const auto id = t.id;
+            h.perform (std::make_unique<AddTrack> (std::move (t)));
+            expect (! h.perform (std::make_unique<RenameTrack> (id, "A")));
+            expect (! h.perform (std::make_unique<RemoveTrack> (ObjectId { 999 })));
+            expectEquals (h.getUndoName(), juce::String (u8"Spur hinzufügen"));
+        }
+
+        beginTest ("fader gesture merges into one undo step");
+        {
+            Song s;
+            CommandHistory h (s);
+            auto t = makeTrack (s, "A");
+            const auto id = t.id;
+            h.perform (std::make_unique<AddTrack> (std::move (t)));
+
+            for (float v : { -1.0f, -2.0f, -3.0f, -4.5f })
+                h.perform (std::make_unique<SetTrackParam> (id, Param::volumeDb, v), true);
+            h.endGesture();
+
+            expectEquals (s.findTrack (id)->volumeDb, -4.5f);
+            h.undo();
+            expectEquals (s.findTrack (id)->volumeDb, 0.0f);
+            expectEquals (s.getNumTracks(), 1); // only the gesture was undone
+
+            h.redo();
+            expectEquals (s.findTrack (id)->volumeDb, -4.5f);
+
+            // a new gesture after endGesture() is a separate step
+            h.perform (std::make_unique<SetTrackParam> (id, Param::volumeDb, -6.0f), true);
+            h.endGesture();
+            h.undo();
+            expectEquals (s.findTrack (id)->volumeDb, -4.5f);
+        }
+
+        beginTest ("parameter limits");
+        {
+            Song s;
+            CommandHistory h (s);
+            auto t = makeTrack (s, "A");
+            const auto id = t.id;
+            h.perform (std::make_unique<AddTrack> (std::move (t)));
+            h.perform (std::make_unique<SetTrackParam> (id, Param::volumeDb, 50.0f));
+            h.perform (std::make_unique<SetTrackParam> (id, Param::pan, -7.0f));
+            expectEquals (s.findTrack (id)->volumeDb, Track::maxVolumeDb);
+            expectEquals (s.findTrack (id)->pan, -1.0f);
+        }
+
+        beginTest ("transactions form one undo step");
+        {
+            Song s;
+            CommandHistory h (s);
+            h.beginTransaction ("Mehrere");
+            for (int i = 0; i < 3; ++i)
+                h.perform (std::make_unique<AddTrack> (makeTrack (s, "T" + juce::String (i))));
+            h.endTransaction();
+
+            expectEquals (s.getNumTracks(), 3);
+            expectEquals (h.getUndoName(), juce::String ("Mehrere"));
+            h.undo();
+            expectEquals (s.getNumTracks(), 0);
+            h.redo();
+            expectEquals (s.getNumTracks(), 3);
+            expectEquals (s.getTracks()[2].name, juce::String ("T2"));
+        }
+
+        beginTest ("regions, inserts, instruments");
+        {
+            Song s;
+            CommandHistory h (s);
+            auto t = makeTrack (s, "A");
+            const auto id = t.id;
+            h.perform (std::make_unique<AddTrack> (std::move (t)));
+
+            Region r;
+            r.id = s.newId();
+            r.position = 960;
+            r.length = 3840;
+            const auto rid = r.id;
+            h.perform (std::make_unique<AddRegion> (id, r));
+            expect (s.findTrack (id)->findRegion (rid) != nullptr);
+            expectEquals ((long long) s.getSongEnd(), (long long) (s.getTempoMap().getTicksPerBar() * 8));
+
+            h.perform (std::make_unique<RemoveRegion> (id, rid));
+            expect (s.findTrack (id)->findRegion (rid) == nullptr);
+            h.undo();
+            expect (s.findTrack (id)->findRegion (rid) != nullptr);
+
+            InsertSlot a { s.newId(), "x:eq", "EQ", false }, b { s.newId(), "x:comp", "Comp", false };
+            h.perform (std::make_unique<AddInsert> (id, a));
+            h.perform (std::make_unique<AddInsert> (id, b, 0));
+            expectEquals (s.findTrack (id)->inserts[0].name, juce::String ("Comp"));
+            h.perform (std::make_unique<RemoveInsert> (id, b.id));
+            expectEquals ((int) s.findTrack (id)->inserts.size(), 1);
+            h.undo();
+            expectEquals (s.findTrack (id)->inserts[0].name, juce::String ("Comp"));
+
+            h.perform (std::make_unique<SetInstrument> (id, "x:synth", "Synth"));
+            expectEquals (s.findTrack (id)->instrumentName, juce::String ("Synth"));
+            h.undo();
+            expect (s.findTrack (id)->instrumentName.isEmpty());
+        }
+
+        beginTest ("listeners are notified");
+        {
+            struct Counter : Song::Listener
+            {
+                void songChanged (const SongChange& c) override { ++count[(int) c.what]; }
+                int count[16] {};
+            } counter;
+
+            Song s;
+            s.addListener (&counter);
+            CommandHistory h (s);
+            auto t = makeTrack (s, "A");
+            const auto id = t.id;
+            h.perform (std::make_unique<AddTrack> (std::move (t)));
+            h.perform (std::make_unique<RenameTrack> (id, "B"));
+            h.perform (std::make_unique<SetTempo> (100.0));
+            s.removeListener (&counter);
+
+            expectEquals (counter.count[(int) SongChange::What::trackAdded], 1);
+            expectEquals (counter.count[(int) SongChange::What::trackChanged], 1);
+            expectEquals (counter.count[(int) SongChange::What::tempoChanged], 1);
+        }
+    }
+};
+
+static MusicalTimeTests musicalTimeTests;
+static ModelAndUndoTests modelAndUndoTests;
+
+} // namespace sms
