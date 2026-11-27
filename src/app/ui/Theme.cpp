@@ -319,19 +319,71 @@ void LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int 
 
     if (vertical)
     {
-        auto track = bounds.withSizeKeepingCentre (4.0f, bounds.getHeight());
-        g.setColour (colours::panelDark);
-        g.fillRoundedRectangle (track, 2.0f);
-        g.setColour (fill.withAlpha (0.7f));
-        g.fillRoundedRectangle (track.withTop (pos), 2.0f);
+        const auto cx = bounds.getCentreX();
+        const auto top = (float) s.getPositionOfValue (s.getMaximum());
+        const auto bottom = (float) s.getPositionOfValue (s.getMinimum());
 
-        auto thumb = juce::Rectangle<float> (juce::jmin (bounds.getWidth(), 26.0f), 12.0f).withCentre ({ bounds.getCentreX(), pos });
-        g.setGradientFill (juce::ColourGradient (colours::headerLight.brighter (0.2f), 0, thumb.getY(), colours::header, 0, thumb.getBottom(), false));
-        g.fillRoundedRectangle (thumb, 2.0f);
+        // dB scale ticks left and right of the fader slot
+        if (s.getProperties().contains ("dbScale"))
+        {
+            g.setFont (font (9.5f));
+            for (double db : { 6.0, 0.0, -6.0, -12.0, -24.0, -48.0 })
+            {
+                if (db < s.getMinimum() || db > s.getMaximum())
+                    continue;
+                const auto ty = (float) s.getPositionOfValue (db);
+                g.setColour (juce::exactlyEqual (db, 0.0) ? colours::textDim : colours::separator);
+                g.drawHorizontalLine ((int) ty, cx - 12.0f, cx - 6.0f);
+                g.drawHorizontalLine ((int) ty, cx + 6.0f, cx + 12.0f);
+                if (bounds.getWidth() >= 64.0f)
+                {
+                    g.setColour (colours::textDim);
+                    g.drawText (juce::String ((int) db), juce::Rectangle<float> (cx - 40.0f, ty - 6.0f, 24.0f, 12.0f),
+                                juce::Justification::centredRight);
+                }
+            }
+        }
+
+        // slot
+        auto slot = juce::Rectangle<float>::leftTopRightBottom (cx - 2.5f, top, cx + 2.5f, bottom);
         g.setColour (colours::border);
-        g.drawRoundedRectangle (thumb, 2.0f, 1.0f);
-        g.setColour (colours::text);
-        g.fillRect (thumb.withSizeKeepingCentre (thumb.getWidth() - 6.0f, 1.0f));
+        g.fillRoundedRectangle (slot.expanded (1.0f), 3.0f);
+        g.setColour (colours::panelDark.darker (0.3f));
+        g.fillRoundedRectangle (slot, 2.5f);
+        g.setColour (fill.withAlpha (0.75f));
+        g.fillRoundedRectangle (slot.withTop (pos), 2.5f);
+
+        // cap: wide and tall like a hardware fader knob
+        const auto capW = juce::jmin (bounds.getWidth() - 2.0f, faderCapWidth);
+        auto cap = juce::Rectangle<float> (capW, faderCapHeight).withCentre ({ cx, pos });
+        const bool active = s.isMouseOverOrDragging();
+
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (cap.translated (0.0f, 2.0f), 3.0f);
+
+        auto body = colours::headerLight.brighter (active ? 0.25f : 0.12f);
+        g.setGradientFill (juce::ColourGradient (body.brighter (0.25f), 0, cap.getY(),
+                                                 body.darker (0.35f), 0, cap.getBottom(), false));
+        g.fillRoundedRectangle (cap, 3.0f);
+
+        // grip ridges above and below the centre line
+        for (int i = 1; i <= 3; ++i)
+        {
+            const auto off = (float) i * 4.5f + 2.0f;
+            g.setColour (juce::Colours::black.withAlpha (0.35f));
+            g.fillRect (cap.getX() + 4.0f, pos - off, capW - 8.0f, 1.0f);
+            g.fillRect (cap.getX() + 4.0f, pos + off, capW - 8.0f, 1.0f);
+            g.setColour (juce::Colours::white.withAlpha (0.12f));
+            g.fillRect (cap.getX() + 4.0f, pos - off + 1.0f, capW - 8.0f, 1.0f);
+            g.fillRect (cap.getX() + 4.0f, pos + off + 1.0f, capW - 8.0f, 1.0f);
+        }
+
+        // centre line marks the exact value
+        g.setColour (active ? colours::accent.brighter (0.3f) : juce::Colours::white.withAlpha (0.9f));
+        g.fillRect (cap.getX() + 2.0f, pos - 1.0f, capW - 4.0f, 2.0f);
+
+        g.setColour (colours::border);
+        g.drawRoundedRectangle (cap, 3.0f, 1.0f);
     }
     else
     {
@@ -355,6 +407,15 @@ void LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int 
         g.setColour (colours::text);
         g.fillRoundedRectangle (thumb, 2.0f);
     }
+}
+
+int LookAndFeel::getSliderThumbRadius (juce::Slider& s)
+{
+    // keep the whole fader cap inside the slider at both ends
+    if (s.getSliderStyle() == juce::Slider::LinearVertical)
+        return (int) std::ceil (faderCapHeight * 0.5f) + 1;
+
+    return LookAndFeel_V4::getSliderThumbRadius (s);
 }
 
 void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,

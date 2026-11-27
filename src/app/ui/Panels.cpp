@@ -45,6 +45,18 @@ namespace
         s.setWantsKeyboardFocus (false);
     }
 
+    /** Mixer faders: grab anywhere and drag (no jumping to the click
+        position), fine adjustment with Shift, dB scale painted beside. */
+    void setupFaderFeel (juce::Slider& s)
+    {
+        s.setSliderSnapsToMousePosition (false);
+        s.setVelocityBasedMode (false);
+        s.setMouseDragSensitivity (300);
+        s.getProperties().set ("dbScale", true);
+        s.setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+        s.setTooltip (u8"Ziehen: Lautstärke  ·  Doppelklick: 0 dB");
+    }
+
     /** dB from slider value: the bottom end of the fader means silence. */
     float sliderToDb (double v) { return v <= -59.95 ? Track::minVolumeDb : (float) v; }
 
@@ -480,6 +492,7 @@ public:
         setupVolumeSlider (fader);
         fader.setSliderStyle (juce::Slider::LinearVertical);
         fader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        setupFaderFeel (fader);
         bindTrackSlider (fader, ctx, [this] { return trackId; }, Param::volumeDb, true);
         addAndMakeVisible (fader);
 
@@ -555,7 +568,7 @@ public:
         buttons.removeFromLeft (2);
         solo.setBounds (buttons);
         value.setBounds (r.removeFromBottom (18));
-        fader.setBounds (r.reduced (0, 4));
+        fader.setBounds (r.reduced (0, 2));
     }
 
     void mouseDown (const juce::MouseEvent&) override { ctx.selection.selectTrack (trackId); }
@@ -578,6 +591,7 @@ public:
         setupVolumeSlider (fader);
         fader.setSliderStyle (juce::Slider::LinearVertical);
         fader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        setupFaderFeel (fader);
         fader.setValue (0.0, juce::dontSendNotification);
         fader.onValueChange = [this]
         {
@@ -637,7 +651,7 @@ public:
         r.removeFromBottom (24);
         value.setBounds (r.removeFromBottom (18));
         meterArea = r.removeFromRight (14).withTrimmedTop (40);
-        r.removeFromRight (6);
+        r.removeFromRight (4);
         fader.setBounds (r.withTrimmedTop (36));
     }
 
@@ -719,10 +733,10 @@ void ConsolePanel::paint (juce::Graphics& g)
 void ConsolePanel::resized()
 {
     auto r = getLocalBounds().withTrimmedTop (panelHeaderHeight);
-    master->setBounds (r.removeFromRight (96));
+    master->setBounds (r.removeFromRight (104));
     viewport.setBounds (r);
 
-    constexpr int stripWidth = 84;
+    constexpr int stripWidth = 90;
     const auto h = r.getHeight() - (viewport.isHorizontalScrollBarShown() ? viewport.getScrollBarThickness() : 0);
     stripHolder.setSize (juce::jmax (r.getWidth(), strips.size() * stripWidth), juce::jmax (0, h));
     for (int i = 0; i < strips.size(); ++i)

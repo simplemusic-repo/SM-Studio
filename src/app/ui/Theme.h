@@ -79,6 +79,12 @@ public:
 
     void drawLinearSlider (juce::Graphics&, int x, int y, int w, int h, float pos, float min, float max,
                            juce::Slider::SliderStyle, juce::Slider&) override;
+    int getSliderThumbRadius (juce::Slider&) override;
+
+    /** Size of the cap of vertical (mixer) faders. */
+    static constexpr float faderCapWidth = 30.0f;
+    static constexpr float faderCapHeight = 44.0f;
+
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos,
                            float startAngle, float endAngle, juce::Slider&) override;
 
