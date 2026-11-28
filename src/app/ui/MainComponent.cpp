@@ -9,7 +9,76 @@
 namespace sms
 {
 
-MainComponent::MainComponent (AppContext& c, bool useNativeMacMenu) : ctx (c), nativeMacMenu (useNativeMacMenu)
+//==============================================================================
+/** Wraps a panel and adds the detach / dock button in its header. */
+class MainComponent::PanelHost final : public juce::Component
+{
+public:
+    PanelHost (std::unique_ptr<juce::Component> c, const juce::String& panelTitle)
+        : content (std::move (c)), title (panelTitle)
+    {
+        addAndMakeVisible (*content);
+        dockButton.setDrawBackground (false);
+        dockButton.setWantsKeyboardFocus (false);
+        dockButton.onClick = [this] { if (onToggleDock) onToggleDock(); };
+        addAndMakeVisible (dockButton);
+        setDetached (false);
+    }
+
+    void setDetached (bool detached)
+    {
+        dockButton.setIcon (detached ? theme::icons::dock() : theme::icons::detach());
+        dockButton.setTooltip (detached ? title + juce::String (u8" wieder andocken")
+                                        : title + juce::String (u8" abkoppeln (eigenes Fenster, z. B. für einen zweiten Bildschirm)"));
+    }
+
+    void resized() override
+    {
+        content->setBounds (getLocalBounds());
+        dockButton.setBounds (getWidth() - 28, 3, 22, 22);
+        dockButton.toFront (false);
+    }
+
+    std::function<void()> onToggleDock;
+
+private:
+    std::unique_ptr<juce::Component> content;
+    juce::String title;
+    theme::IconButton dockButton { "Abkoppeln", theme::icons::detach() };
+};
+
+//==============================================================================
+/** A separate top-level window showing a detached panel. */
+class MainComponent::PanelWindow final : public juce::DocumentWindow
+{
+public:
+    PanelWindow (const juce::String& title, PanelHost& host)
+        : juce::DocumentWindow (juce::String (u8"SM Studio – ") + title, theme::colours::window, juce::DocumentWindow::closeButton)
+    {
+        setUsingNativeTitleBar (true);
+        setContentNonOwned (&host, false);
+        setResizable (true, false);
+        setResizeLimits (320, 160, 10000, 10000);
+    }
+
+    void closeButtonPressed() override
+    {
+        if (onClose)
+            onClose();
+    }
+
+    bool keyPressed (const juce::KeyPress& key) override
+    {
+        // shortcuts (space = play ...) also work while this window has focus
+        return onKey != nullptr && onKey (key);
+    }
+
+    std::function<void()> onClose;
+    std::function<bool (const juce::KeyPress&)> onKey;
+};
+
+//==============================================================================
+MainComponent::MainComponent (AppContext& c, bool isHeadless) : ctx (c), headless (isHeadless)
 {
     registerViewActions();
 
@@ -29,7 +98,7 @@ MainComponent::MainComponent (AppContext& c, bool useNativeMacMenu) : ctx (c), n
     createPanels();
 
    #if JUCE_MAC
-    if (nativeMacMenu)
+    if (! headless)
         juce::MenuBarModel::setMacMainMenu (this);
     else
    #endif
@@ -45,14 +114,24 @@ MainComponent::MainComponent (AppContext& c, bool useNativeMacMenu) : ctx (c), n
 
 MainComponent::~MainComponent()
 {
+    saveLayout();
     ctx.history.removeListener (this);
+
+    for (auto& p : panels)
+        p.window.reset();
+
    #if JUCE_MAC
-    if (nativeMacMenu)
+    if (! headless)
         juce::MenuBarModel::setMacMainMenu (nullptr);
    #endif
 }
 
 //==============================================================================
+juce::String MainComponent::key (const DockedPanel& p, const char* what) const
+{
+    return "panel." + p.id + "." + what;
+}
+
 void MainComponent::createPanels()
 {
     // the first registered panel per location is shown; more panels per
@@ -63,46 +142,191 @@ void MainComponent::createPanels()
         if (taken || ! info.create)
             continue;
 
-        DockedPanel p { info.location, info.defaultSize, info.visibleByDefault, info.create (ctx) };
-        addChildComponent (*p.component);
-        p.component->setVisible (p.visible);
+        DockedPanel p;
+        p.id = info.id;
+        p.title = info.title;
+        p.location = info.location;
+        p.size = ctx.settings.getIntValue ("panel." + info.id + ".size", info.defaultSize);
+        p.visible = ctx.settings.getBoolValue ("panel." + info.id + ".visible", info.visibleByDefault);
+        p.detached = ! headless && ctx.settings.getBoolValue ("panel." + info.id + ".detached", false);
+        p.host = std::make_unique<PanelHost> (info.create (ctx), info.title);
         panels.push_back (std::move (p));
     }
+
+    for (auto& p : panels)
+    {
+        const auto loc = p.location;
+        p.host->onToggleDock = [this, loc] { setPanelDetached (loc, ! isPanelDetached (loc)); };
+
+        if (p.detached)
+        {
+            openWindow (p, true);
+        }
+        else
+        {
+            addChildComponent (*p.host);
+            p.host->setVisible (p.visible);
+        }
+
+        // menu entry "<Panel> abkoppeln"
+        ActionInfo a;
+        a.id = "view.detach." + p.id;
+        a.name = p.title + juce::String (" in eigenem Fenster");
+        a.menu = "Ansicht";
+        a.menuOrder = 100 + (int) loc;
+        a.separatorBefore = loc == panels.front().location;
+        a.perform = [this, loc] { setPanelDetached (loc, ! isPanelDetached (loc)); };
+        a.isTicked = [this, loc] { return isPanelDetached (loc); };
+        a.isEnabled = [this] { return ! headless; };
+        ctx.registry.addAction (std::move (a));
+    }
+}
+
+void MainComponent::openWindow (DockedPanel& p, bool restorePosition)
+{
+    const auto dockedBounds = p.host->getScreenBounds();
+
+    removeChildComponent (p.host.get());
+    p.host->setDetached (true);
+
+    p.window = std::make_unique<PanelWindow> (p.title, *p.host);
+    const auto loc = p.location;
+    p.window->onClose = [this, loc] { setPanelVisible (loc, false); };
+    p.window->onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
+
+    const auto saved = ctx.settings.getValue (key (p, "window"));
+    bool placed = false;
+
+    if (restorePosition && saved.isNotEmpty() && p.window->restoreWindowStateFromString (saved))
+    {
+        // only keep the saved position if it is still on a connected screen
+        const auto screens = juce::Desktop::getInstance().getDisplays().getRectangleList (true);
+        placed = screens.intersectsRectangle (p.window->getBounds().reduced (40));
+    }
+
+    if (! placed)
+    {
+        if (! dockedBounds.isEmpty() && dockedBounds.getWidth() > 200 && dockedBounds.getHeight() > 100)
+            p.window->setBounds (dockedBounds.translated (30, -30));
+        else if (p.location == PanelLocation::bottom)
+            p.window->centreWithSize (1100, p.size + 40);
+        else
+            p.window->centreWithSize (p.size, 700);
+    }
+
+    p.window->setVisible (p.visible);
+}
+
+MainComponent::DockedPanel* MainComponent::findPanel (PanelLocation loc)
+{
+    for (auto& p : panels)
+        if (p.location == loc)
+            return &p;
+    return nullptr;
+}
+
+const MainComponent::DockedPanel* MainComponent::findPanel (PanelLocation loc) const
+{
+    for (auto& p : panels)
+        if (p.location == loc)
+            return &p;
+    return nullptr;
 }
 
 bool MainComponent::isPanelVisible (PanelLocation loc) const
 {
-    for (auto& p : panels)
-        if (p.location == loc)
-            return p.visible;
-    return false;
+    auto* p = findPanel (loc);
+    return p != nullptr && p->visible;
+}
+
+bool MainComponent::isPanelDetached (PanelLocation loc) const
+{
+    auto* p = findPanel (loc);
+    return p != nullptr && p->detached;
 }
 
 void MainComponent::setPanelVisible (PanelLocation loc, bool shouldBeVisible)
 {
-    for (auto& p : panels)
+    auto* p = findPanel (loc);
+    if (p == nullptr)
+        return;
+
+    p->visible = shouldBeVisible;
+
+    if (p->window != nullptr)
     {
-        if (p.location == loc)
-        {
-            p.visible = shouldBeVisible;
-            p.component->setVisible (shouldBeVisible);
-        }
+        p->window->setVisible (shouldBeVisible);
+        if (shouldBeVisible)
+            p->window->toFront (true);
     }
+    else
+    {
+        p->host->setVisible (shouldBeVisible);
+    }
+
+    layoutChanged();
+}
+
+void MainComponent::setPanelDetached (PanelLocation loc, bool shouldDetach)
+{
+    auto* p = findPanel (loc);
+    if (p == nullptr || headless || p->detached == shouldDetach)
+        return;
+
+    p->detached = shouldDetach;
+    p->visible = true;
+
+    if (shouldDetach)
+    {
+        openWindow (*p, true);
+        p->window->toFront (true);
+    }
+    else
+    {
+        ctx.settings.setValue (key (*p, "window"), p->window->getWindowStateAsString());
+        p->window->clearContentComponent();
+        p->window.reset();
+        p->host->setDetached (false);
+        addAndMakeVisible (*p->host);
+    }
+
+    layoutChanged();
+}
+
+void MainComponent::layoutChanged()
+{
     resized();
     transport->refreshToggles();
     menuItemsChanged();
+    saveLayout();
+}
+
+void MainComponent::saveLayout()
+{
+    if (headless)
+        return;
+
+    for (auto& p : panels)
+    {
+        ctx.settings.setValue (key (p, "visible"), p.visible);
+        ctx.settings.setValue (key (p, "detached"), p.detached);
+        ctx.settings.setValue (key (p, "size"), p.size);
+
+        if (p.window != nullptr)
+            ctx.settings.setValue (key (p, "window"), p.window->getWindowStateAsString());
+    }
 }
 
 void MainComponent::registerViewActions()
 {
-    auto addToggle = [this] (const char* id, const char* name, int key, PanelLocation loc, int order)
+    auto addToggle = [this] (const char* id, const char* name, int keyCode, PanelLocation loc, int order)
     {
         ActionInfo a;
         a.id = id;
         a.name = name;
         a.menu = "Ansicht";
         a.menuOrder = order;
-        a.keys = { juce::KeyPress (key) };
+        a.keys = { juce::KeyPress (keyCode) };
         a.perform = [this, loc] { setPanelVisible (loc, ! isPanelVisible (loc)); };
         a.isTicked = [this, loc] { return isPanelVisible (loc); };
         ctx.registry.addAction (std::move (a));
@@ -144,28 +368,28 @@ void MainComponent::resized()
     {
         for (auto& p : panels)
         {
-            if (p.location != loc || ! p.visible)
+            if (p.location != loc || ! p.visible || p.detached)
                 continue;
 
             switch (loc)
             {
-                case PanelLocation::bottom: p.component->setBounds (r.removeFromBottom (juce::jmin (p.size, r.getHeight() / 2))); break;
-                case PanelLocation::left:   p.component->setBounds (r.removeFromLeft (p.size)); break;
-                case PanelLocation::right:  p.component->setBounds (r.removeFromRight (p.size)); break;
+                case PanelLocation::bottom: p.host->setBounds (r.removeFromBottom (juce::jmin (p.size, r.getHeight() / 2))); break;
+                case PanelLocation::left:   p.host->setBounds (r.removeFromLeft (p.size)); break;
+                case PanelLocation::right:  p.host->setBounds (r.removeFromRight (p.size)); break;
             }
         }
     };
 
-    // like Studio One: the console spans the full width below everything
+    // the console spans the full width below everything
     place (PanelLocation::bottom);
     place (PanelLocation::left);
     place (PanelLocation::right);
     arrange->setBounds (r);
 }
 
-bool MainComponent::keyPressed (const juce::KeyPress& key)
+bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
-    if (auto* a = ctx.registry.findActionForKey (key))
+    if (auto* a = ctx.registry.findActionForKey (k))
     {
         if (a->perform && (! a->isEnabled || a->isEnabled()))
         {

@@ -12,38 +12,6 @@ using namespace theme;
 using Param = commands::SetTrackParam::Param;
 
 //==============================================================================
-/** Small square toggle used for M / S / R in track headers and the console. */
-class StateButton final : public juce::Button
-{
-public:
-    StateButton (const juce::String& letter, juce::Colour on, const juce::String& tip)
-        : juce::Button (letter), onColour (on)
-    {
-        setTooltip (tip);
-        setWantsKeyboardFocus (false);
-    }
-
-    void paintButton (juce::Graphics& g, bool highlighted, bool down) override
-    {
-        auto r = getLocalBounds().toFloat().reduced (0.5f);
-        auto bg = getToggleState() ? onColour : colours::panelDark;
-        if (down) bg = bg.darker (0.2f);
-        else if (highlighted) bg = bg.brighter (0.1f);
-
-        g.setColour (bg);
-        g.fillRoundedRectangle (r, 2.5f);
-        g.setColour (colours::border);
-        g.drawRoundedRectangle (r, 2.5f, 1.0f);
-        g.setColour (getToggleState() ? colours::textDark : colours::textDim);
-        g.setFont (font (11.5f, true));
-        g.drawText (getName(), getLocalBounds(), juce::Justification::centred);
-    }
-
-private:
-    juce::Colour onColour;
-};
-
-//==============================================================================
 class TrackHeader final : public juce::Component
 {
 public:

@@ -2,6 +2,7 @@
 #include "Panels.h"
 
 #include "core/Commands.h"
+#include "core/ValueFormat.h"
 #include "extension/ExtensionRegistry.h"
 
 namespace sms
@@ -14,20 +15,8 @@ namespace
 {
     constexpr int panelHeaderHeight = 28;
 
-    juce::String formatDb (float db)
-    {
-        if (db <= Track::minVolumeDb + 0.01f)
-            return "-inf dB";
-        return juce::String (db, 1) + " dB";
-    }
-
-    juce::String formatPan (float pan)
-    {
-        const auto v = juce::roundToInt (pan * 100.0f);
-        if (v == 0)
-            return "C";
-        return (v < 0 ? "L" : "R") + juce::String (std::abs (v));
-    }
+    using valueformat::formatDb;
+    using valueformat::formatPan;
 
     void setupVolumeSlider (juce::Slider& s)
     {
@@ -60,6 +49,32 @@ namespace
     /** dB from slider value: the bottom end of the fader means silence. */
     float sliderToDb (double v) { return v <= -59.95 ? Track::minVolumeDb : (float) v; }
 
+    /** Typing a value into a label sets the track parameter (undoable). */
+    void bindValueLabel (juce::Label& l, AppContext& ctx, std::function<ObjectId()> track, Param p)
+    {
+        l.onTextChange = [&l, &ctx, track, p]
+        {
+            const auto parsed = p == Param::volumeDb ? valueformat::parseDb (l.getText())
+                                                     : valueformat::parsePan (l.getText());
+            const auto* t = ctx.song.findTrack (track());
+
+            if (parsed && t != nullptr)
+                ctx.perform (std::make_unique<commands::SetTrackParam> (t->id, p, *parsed));
+
+            // show the (clamped / unchanged) value in its normal format again
+            if ((t = ctx.song.findTrack (track())) != nullptr)
+                l.setText (p == Param::volumeDb ? formatDb (t->volumeDb) : formatPan (t->pan), juce::dontSendNotification);
+        };
+    }
+
+    void bindToggle (juce::Button& b, AppContext& ctx, std::function<ObjectId()> track, Param p)
+    {
+        b.onClick = [&b, &ctx, track, p]
+        {
+            ctx.perform (std::make_unique<commands::SetTrackParam> (track(), p, b.getToggleState() ? 0.0f : 1.0f));
+        };
+    }
+
     void bindTrackSlider (juce::Slider& s, AppContext& ctx, std::function<ObjectId()> track, Param p, bool isVolume)
     {
         s.onValueChange = [&ctx, &s, track, p, isVolume]
@@ -84,13 +99,17 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
         ctx.perform (std::make_unique<commands::RenameTrack> (shownTrack, nameLabel.getText().trim()));
     };
 
-    for (auto* l : { &typeLabel, &instrumentLabel, &volumeValue, &panValue })
+    for (auto* l : { &typeLabel, &instrumentLabel })
     {
         l->setFont (font (12.5f));
         l->setColour (juce::Label::textColourId, colours::textDim);
     }
-    volumeValue.setJustificationType (juce::Justification::centredRight);
-    panValue.setJustificationType (juce::Justification::centredRight);
+    makeValueLabel (volumeValue);
+    makeValueLabel (panValue);
+    volumeValue.setJustificationType (juce::Justification::centred);
+    panValue.setJustificationType (juce::Justification::centred);
+    bindValueLabel (volumeValue, ctx, [this] { return shownTrack; }, Param::volumeDb);
+    bindValueLabel (panValue, ctx, [this] { return shownTrack; }, Param::pan);
 
     volumeCaption.setText (u8"Lautstärke", juce::dontSendNotification);
     panCaption.setText ("Panorama", juce::dontSendNotification);
@@ -109,12 +128,8 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
     bindTrackSlider (volume, ctx, [this] { return shownTrack; }, Param::volumeDb, true);
     bindTrackSlider (pan, ctx, [this] { return shownTrack; }, Param::pan, false);
 
-    muteButton.setColour (juce::TextButton::buttonOnColourId, colours::mute);
-    soloButton.setColour (juce::TextButton::buttonOnColourId, colours::solo);
-    muteButton.setColour (juce::TextButton::textColourOnId, colours::textDark);
-    soloButton.setColour (juce::TextButton::textColourOnId, colours::textDark);
-    muteButton.onClick = [this] { ctx.perform (std::make_unique<commands::SetTrackParam> (shownTrack, Param::mute, muteButton.getToggleState() ? 0.0f : 1.0f)); };
-    soloButton.onClick = [this] { ctx.perform (std::make_unique<commands::SetTrackParam> (shownTrack, Param::solo, soloButton.getToggleState() ? 0.0f : 1.0f)); };
+    bindToggle (muteButton, ctx, [this] { return shownTrack; }, Param::mute);
+    bindToggle (soloButton, ctx, [this] { return shownTrack; }, Param::solo);
 
     for (auto* comp : std::initializer_list<juce::Component*> { &nameLabel, &typeLabel, &instrumentLabel, &volume, &volumeValue, &volumeCaption, &panCaption,
                                                                 &pan, &panValue, &muteButton, &soloButton, &insertsTitle })
@@ -167,8 +182,10 @@ void InspectorPanel::refresh()
         if (! pan.isMouseButtonDown())
             pan.setValue (t->pan, juce::dontSendNotification);
 
-        volumeValue.setText (formatDb (t->volumeDb), juce::dontSendNotification);
-        panValue.setText (formatPan (t->pan), juce::dontSendNotification);
+        if (! volumeValue.isBeingEdited())
+            volumeValue.setText (formatDb (t->volumeDb), juce::dontSendNotification);
+        if (! panValue.isBeingEdited())
+            panValue.setText (formatPan (t->pan), juce::dontSendNotification);
         muteButton.setToggleState (t->mute, juce::dontSendNotification);
         soloButton.setToggleState (t->solo, juce::dontSendNotification);
     }
@@ -266,21 +283,21 @@ void InspectorPanel::resized()
 
     r.removeFromTop (10);
     auto volRow = r.removeFromTop (18);
-    volumeValue.setBounds (volRow.removeFromRight (70));
+    volumeValue.setBounds (volRow.removeFromRight (72).reduced (0, 0));
     volumeCaption.setBounds (volRow);
     volume.setBounds (r.removeFromTop (20));
 
     r.removeFromTop (8);
     auto panRow = r.removeFromTop (18);
-    panValue.setBounds (panRow.removeFromRight (70));
+    panValue.setBounds (panRow.removeFromRight (72));
     panCaption.setBounds (panRow);
     pan.setBounds (r.removeFromTop (20));
 
     r.removeFromTop (10);
-    auto buttons = r.removeFromTop (24);
-    muteButton.setBounds (buttons.removeFromLeft (buttons.getWidth() / 2 - 3));
+    auto buttons = r.removeFromTop (26);
+    muteButton.setBounds (buttons.removeFromLeft (34));
     buttons.removeFromLeft (6);
-    soloButton.setBounds (buttons);
+    soloButton.setBounds (buttons.removeFromLeft (34));
 
     r.removeFromTop (16);
     insertsTitle.setBounds (r.removeFromTop (20));
@@ -503,20 +520,18 @@ public:
         addAndMakeVisible (panKnob);
 
         for (auto* b : { &mute, &solo })
-        {
-            b->setColour (juce::TextButton::textColourOnId, colours::textDark);
-            b->setWantsKeyboardFocus (false);
             addAndMakeVisible (*b);
-        }
-        mute.setColour (juce::TextButton::buttonOnColourId, colours::mute);
-        solo.setColour (juce::TextButton::buttonOnColourId, colours::solo);
-        mute.onClick = [this] { ctx.perform (std::make_unique<commands::SetTrackParam> (trackId, Param::mute, mute.getToggleState() ? 0.0f : 1.0f)); };
-        solo.onClick = [this] { ctx.perform (std::make_unique<commands::SetTrackParam> (trackId, Param::solo, solo.getToggleState() ? 0.0f : 1.0f)); };
+        bindToggle (mute, ctx, [this] { return trackId; }, Param::mute);
+        bindToggle (solo, ctx, [this] { return trackId; }, Param::solo);
 
-        value.setFont (font (11.5f));
-        value.setJustificationType (juce::Justification::centred);
-        value.setColour (juce::Label::textColourId, colours::textDim);
-        addAndMakeVisible (value);
+        for (auto* l : { &value, &panValue })
+        {
+            makeValueLabel (*l, 11.5f);
+            l->setJustificationType (juce::Justification::centred);
+            addAndMakeVisible (*l);
+        }
+        bindValueLabel (value, ctx, [this] { return trackId; }, Param::volumeDb);
+        bindValueLabel (panValue, ctx, [this] { return trackId; }, Param::pan);
 
         update();
     }
@@ -533,7 +548,10 @@ public:
                 panKnob.setValue (t->pan, juce::dontSendNotification);
             mute.setToggleState (t->mute, juce::dontSendNotification);
             solo.setToggleState (t->solo, juce::dontSendNotification);
-            value.setText (formatDb (t->volumeDb), juce::dontSendNotification);
+            if (! value.isBeingEdited())
+                value.setText (formatDb (t->volumeDb), juce::dontSendNotification);
+            if (! panValue.isBeingEdited())
+                panValue.setText (formatPan (t->pan), juce::dontSendNotification);
             name = t->name;
             colour = t->colour;
         }
@@ -562,12 +580,14 @@ public:
         auto r = getLocalBounds().reduced (6, 6);
         r.removeFromBottom (24);
         panKnob.setBounds (r.removeFromTop (34).withSizeKeepingCentre (32, 32));
-        r.removeFromTop (4);
+        panValue.setBounds (r.removeFromTop (18).withSizeKeepingCentre (52, 17));
+        r.removeFromTop (5);
         auto buttons = r.removeFromTop (20);
         mute.setBounds (buttons.removeFromLeft (buttons.getWidth() / 2 - 1));
         buttons.removeFromLeft (2);
         solo.setBounds (buttons);
-        value.setBounds (r.removeFromBottom (18));
+        value.setBounds (r.removeFromBottom (18).withSizeKeepingCentre (68, 17));
+        r.removeFromBottom (3);
         fader.setBounds (r.reduced (0, 2));
     }
 
@@ -577,8 +597,8 @@ private:
     AppContext& ctx;
     ObjectId trackId;
     juce::Slider fader, panKnob;
-    juce::TextButton mute { "M" }, solo { "S" };
-    juce::Label value;
+    StateButton mute { "M", colours::mute, "Stumm" }, solo { "S", colours::solo, "Solo" };
+    juce::Label value, panValue;
     juce::String name;
     juce::Colour colour;
 };
@@ -600,10 +620,15 @@ public:
         };
         addAndMakeVisible (fader);
 
-        value.setFont (font (11.5f));
+        makeValueLabel (value, 11.5f);
         value.setJustificationType (juce::Justification::centred);
-        value.setColour (juce::Label::textColourId, colours::textDim);
         value.setText (formatDb (0.0f), juce::dontSendNotification);
+        value.onTextChange = [this]
+        {
+            if (auto db = valueformat::parseDb (value.getText()))
+                fader.setValue (juce::jmax (-60.0, (double) *db), juce::sendNotificationSync);
+            value.setText (formatDb (sliderToDb (fader.getValue())), juce::dontSendNotification);
+        };
         addAndMakeVisible (value);
     }
 
@@ -649,7 +674,8 @@ public:
     {
         auto r = getLocalBounds().reduced (8, 8);
         r.removeFromBottom (24);
-        value.setBounds (r.removeFromBottom (18));
+        value.setBounds (r.removeFromBottom (18).withSizeKeepingCentre (68, 17));
+        r.removeFromBottom (3);
         meterArea = r.removeFromRight (14).withTrimmedTop (40);
         r.removeFromRight (4);
         fader.setBounds (r.withTrimmedTop (36));

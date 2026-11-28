@@ -10,6 +10,8 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [x] Oberfläche: Toolbar, Inspector, Arrangement mit Lineal, Browser, Konsole, Transportleiste
 - [x] Drag & Drop: Instrument → Spur, Effekt → Insert, Audiodatei → Audiospur (+ aus Explorer/Finder)
 - [x] Audio-Engine mit Transport und Metronom
+- [x] Konsole mit großen Fadern, dB-Skala, Zahleneingabe für Lautstärke/Panorama
+- [x] Panels abkoppelbar (zweiter Bildschirm), Layout und Fensterpositionen werden gespeichert
 
 ## Etappe 2 – Arrangement & Audio-Wiedergabe
 - [ ] Render-Snapshots für die Engine, Audio-Regionen abspielen (mit Lautstärke/Pan/Mute/Solo)

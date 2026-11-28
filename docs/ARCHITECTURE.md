@@ -67,7 +67,18 @@ Alles, was der Nutzer sieht, wird von **Modulen** registriert (`extension/Extens
 | `BrowserSource` | Tab im Browser mit ziehbaren Einträgen |
 | `DropHandlerInfo` | was passiert, wenn ein Browser-Eintrag einer Art abgelegt wird |
 
-Module bekommen einen `AppContext` (Song, History, Selection, Engine, Registry, EditState).
+Module bekommen einen `AppContext` (Song, History, Selection, Engine, Registry, EditState,
+Settings). `settings` ist ein `juce::PropertySet`, das automatisch gespeichert wird
+(Windows: `%APPDATA%\SM Studio`, macOS: `~/Library/Application Support/SM Studio`,
+Linux: `~/.config/SM Studio`). Schlüssel mit Präfix, z. B. `panel.console.window`.
+
+### Panels und Fenster
+
+`MainComponent` dockt das erste Panel jeder Position an (links/rechts/unten). Jedes Panel
+steckt in einem `PanelHost` mit Abkoppel-Knopf; abgekoppelt wird es in einem eigenen
+`PanelWindow` angezeigt. Sichtbarkeit, Andock-Zustand, Panelgröße und Fensterpositionen
+werden gespeichert; liegt eine gespeicherte Position auf keinem angeschlossenen Bildschirm
+mehr, wird das Fenster neu platziert. Tastaturkürzel funktionieren auch in abgekoppelten Fenstern.
 
 ### Eine neue Funktion hinzufügen
 

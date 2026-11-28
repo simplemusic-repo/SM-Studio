@@ -238,3 +238,49 @@ static MusicalTimeTests musicalTimeTests;
 static ModelAndUndoTests modelAndUndoTests;
 
 } // namespace sms
+
+//==============================================================================
+#include "core/ValueFormat.h"
+
+namespace sms
+{
+
+class ValueFormatTests final : public juce::UnitTest
+{
+public:
+    ValueFormatTests() : juce::UnitTest ("Value format", "SMStudio") {}
+
+    void runTest() override
+    {
+        using namespace valueformat;
+
+        beginTest ("volume");
+        expectEquals (formatDb (0.0f), juce::String ("0.0 dB"));
+        expectEquals (formatDb (-3.46f), juce::String ("-3.5 dB"));
+        expectEquals (formatDb (2.0f), juce::String ("+2.0 dB"));
+        expectEquals (formatDb (-0.01f), juce::String ("0.0 dB"));
+        expectEquals (formatDb (Track::minVolumeDb), juce::String ("-inf dB"));
+        expectEquals (*parseDb ("-3,5 dB"), -3.5f);
+        expectEquals (*parseDb (" +4 "), 4.0f);
+        expectEquals (*parseDb ("99"), Track::maxVolumeDb);
+        expectEquals (*parseDb ("-inf"), Track::minVolumeDb);
+        expect (! parseDb ("abc").has_value());
+        expect (! parseDb ("").has_value());
+
+        beginTest ("pan");
+        expectEquals (formatPan (0.0f), juce::String ("C"));
+        expectEquals (formatPan (-0.3f), juce::String ("L30"));
+        expectEquals (formatPan (1.0f), juce::String ("R100"));
+        expectEquals (*parsePan ("c"), 0.0f);
+        expectEquals (*parsePan ("L30"), -0.3f);
+        expectEquals (*parsePan ("r 20"), 0.2f);
+        expectEquals (*parsePan ("-45"), -0.45f);
+        expectEquals (*parsePan ("45"), 0.45f);
+        expectEquals (*parsePan ("L250"), -1.0f);
+        expect (! parsePan ("links").has_value());
+    }
+};
+
+static ValueFormatTests valueFormatTests;
+
+} // namespace sms

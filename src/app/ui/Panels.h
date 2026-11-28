@@ -31,7 +31,8 @@ private:
     juce::Label nameLabel, typeLabel, instrumentLabel, volumeCaption, volumeValue, panCaption, panValue, insertsTitle, emptyLabel;
     juce::Slider volume { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
     juce::Slider pan { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
-    juce::TextButton muteButton { "Stumm" }, soloButton { "Solo" };
+    theme::StateButton muteButton { "M", theme::colours::mute, "Stumm" },
+                       soloButton { "S", theme::colours::solo, "Solo" };
     juce::OwnedArray<juce::Component> insertRows;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InspectorPanel)

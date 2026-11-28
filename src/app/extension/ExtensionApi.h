@@ -70,6 +70,10 @@ struct AppContext
     ExtensionRegistry& registry;
     EditState& edit;
 
+    /** Persistent user settings (window positions, preferences ...).
+        Saved automatically; keys are namespaced, e.g. "panel.console.visible". */
+    juce::PropertySet& settings;
+
     /** Shorthand: performs an undoable command. */
     bool perform (std::unique_ptr<Command> c, bool allowMerge = false) { return history.perform (std::move (c), allowMerge); }
 };

@@ -29,8 +29,8 @@ namespace colours
     inline const juce::Colour accentDim    { 0xff2a5f99 };
     inline const juce::Colour play         { 0xff4cc36a };
     inline const juce::Colour record       { 0xffe5483f };
-    inline const juce::Colour mute         { 0xfff0a432 };
-    inline const juce::Colour solo         { 0xfff2d43d };
+    inline const juce::Colour mute         { 0xff3f86f2 }; // blue
+    inline const juce::Colour solo         { 0xfff5cf2e }; // yellow
     inline const juce::Colour playhead     { 0xffe9eef5 };
     inline const juce::Colour lcd          { 0xff111316 };
     inline const juce::Colour lcdText      { 0xff9fd2ff };
@@ -64,6 +64,8 @@ namespace icons
     juce::Path plus();
     juce::Path instrument();
     juce::Path waveform();
+    juce::Path detach();
+    juce::Path dock();
 }
 
 //==============================================================================
@@ -122,6 +124,22 @@ private:
     juce::Colour onColour;
     bool drawBackground = true;
 };
+
+/** Small square toggle with a letter (M / S / R). The letter is shown in the
+    button's colour when off, and dark on the filled colour when on, so the
+    buttons stay distinguishable in both states. */
+class StateButton final : public juce::Button
+{
+public:
+    StateButton (const juce::String& letter, juce::Colour onColour, const juce::String& tooltip);
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+
+private:
+    juce::Colour onColour;
+};
+
+/** Styles a label as an editable numeric value (click to type). */
+void makeValueLabel (juce::Label&, float fontHeight = 12.5f);
 
 /** Paints a panel title bar (used at the top of Inspector, Browser ...). */
 void drawPanelHeader (juce::Graphics&, juce::Rectangle<int> area, const juce::String& title);

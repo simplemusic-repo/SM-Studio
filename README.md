@@ -17,6 +17,9 @@ Siehe [Roadmap](docs/ROADMAP.md).
 - Audio- und Instrumentenspuren anlegen, umbenennen, löschen, stumm/solo, Lautstärke und Panorama
 - Drag & Drop aus dem Browser: Instrument → neue Instrumentenspur, Effekt → Insert auf der Spur,
   Audiodatei → Audiospur mit Event (auch direkt aus Explorer/Finder)
+- Lautstärke und Panorama per Fader/Regler oder als Zahl eintippen (z. B. `-3,5` oder `L30`)
+- Konsole, Browser und Inspector abkoppelbar (eigenes Fenster, z. B. auf einem zweiten Bildschirm);
+  Fensterpositionen und Layout werden gespeichert
 - Rückgängig/Wiederherstellen für alle Änderungen
 - Audioausgabe mit Transport (Play/Stop/Positionieren) und Metronom
 - Menüs und Tastaturkürzel kommen vollständig aus dem Modulsystem

@@ -20,13 +20,37 @@ namespace sms
 /** Owns the document and all services; builds the AppContext. */
 struct AppState final : private Song::Listener
 {
-    AppState()
+    /** @param persistentSettings  false for screenshots/tests: settings stay in memory */
+    explicit AppState (bool persistentSettings) : settings (chooseSettings (persistentSettings))
     {
         song.addListener (this);
         syncTempo();
     }
 
-    ~AppState() override { song.removeListener (this); }
+    ~AppState() override
+    {
+        song.removeListener (this);
+        appProperties.saveIfNeeded();
+    }
+
+    juce::PropertySet& chooseSettings (bool persistent)
+    {
+        if (! persistent)
+            return memorySettings;
+
+        juce::PropertiesFile::Options o;
+        o.applicationName = "SM Studio";
+       #if JUCE_LINUX || JUCE_BSD
+        o.folderName = ".config/SM Studio";
+       #else
+        o.folderName = "SM Studio";
+       #endif
+        o.filenameSuffix = ".settings";
+        o.osxLibrarySubFolder = "Application Support";
+        o.millisecondsBeforeSaving = 1000;
+        appProperties.setStorageParameters (o);
+        return *appProperties.getUserSettings();
+    }
 
     void songChanged (const SongChange& c) override
     {
@@ -39,22 +63,27 @@ struct AppState final : private Song::Listener
         engine.setTempo (song.getTempoMap().getTempo(), song.getTempoMap().getTimeSignature());
     }
 
+    juce::ApplicationProperties appProperties;
+    juce::PropertySet memorySettings;
+    juce::PropertySet& settings;
+
     Song song;
     CommandHistory history { song };
     Selection selection;
     AudioEngine engine;
     ExtensionRegistry registry;
     EditState edit;
-    AppContext ctx { song, history, selection, engine, registry, edit };
+    AppContext ctx { song, history, selection, engine, registry, edit, settings };
 };
 
 //==============================================================================
 class MainWindow final : public juce::DocumentWindow
 {
 public:
-    explicit MainWindow (AppContext& ctx)
+    explicit MainWindow (AppContext& c)
         : juce::DocumentWindow (juce::JUCEApplication::getInstance()->getApplicationName(),
-                                theme::colours::window, juce::DocumentWindow::allButtons)
+                                theme::colours::window, juce::DocumentWindow::allButtons),
+          ctx (c)
     {
         setUsingNativeTitleBar (true);
         setContentOwned (new MainComponent (ctx), true);
@@ -64,13 +93,46 @@ public:
         auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
         const auto area = display != nullptr ? display->userBounds.toNearestInt() : juce::Rectangle<int> (1600, 950);
         centreWithSize (juce::jmin (1600, area.getWidth() - 40), juce::jmin (950, area.getHeight() - 40));
+
+        // restore the last position if that screen is still connected
+        const auto saved = ctx.settings.getValue ("mainWindow.state");
+        const auto before = getBounds();
+        if (saved.isNotEmpty() && restoreWindowStateFromString (saved))
+        {
+            const auto screens = juce::Desktop::getInstance().getDisplays().getRectangleList (true);
+            if (! screens.intersectsRectangle (getBounds().reduced (60)))
+                setBounds (before);
+        }
+
         setVisible (true);
-        getContentComponent()->grabKeyboardFocus();
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::Component> (getContentComponent())]
+        {
+            if (safe != nullptr)
+                safe->grabKeyboardFocus();
+        });
+    }
+
+    /** Keys that reach the window itself (no component focused) go to the main
+        component so shortcuts always work. */
+    bool keyPressed (const juce::KeyPress& key) override
+    {
+        if (auto* main = getContentComponent())
+            return main->keyPressed (key);
+        return false;
+    }
+
+    ~MainWindow() override
+    {
+        ctx.settings.setValue ("mainWindow.state", getWindowStateAsString());
+        if (auto* main = dynamic_cast<MainComponent*> (getContentComponent()))
+            main->saveLayout();
     }
 
     void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 
 private:
+    AppContext& ctx;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainWindow)
 };
 
@@ -93,7 +155,8 @@ public:
             return i >= 0 && i + 1 < args.size() ? args[i + 1].unquoted() : juce::String();
         };
 
-        state = std::make_unique<AppState>();
+        const bool screenshotMode = argValue ("--screenshot").isNotEmpty();
+        state = std::make_unique<AppState> (! screenshotMode);
 
         for (auto& m : createBuiltInModules())
             state->registry.addModule (std::move (m));
@@ -142,7 +205,7 @@ private:
         }
 
         {
-            MainComponent comp (state->ctx, false);
+            MainComponent comp (state->ctx, true);
             comp.setSize (w, h);
 
             for (auto& p : juce::StringArray::fromTokens (show, ",", ""))

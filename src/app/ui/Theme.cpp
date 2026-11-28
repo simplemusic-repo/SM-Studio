@@ -224,6 +224,51 @@ namespace icons
     }
 }
 
+namespace icons
+{
+    juce::Path detach()
+    {
+        // window with an arrow pointing out (top right)
+        juce::Path frame;
+        frame.startNewSubPath (5.0f, 2.0f);
+        frame.lineTo (1.5f, 2.0f);
+        frame.lineTo (1.5f, 8.5f);
+        frame.lineTo (8.0f, 8.5f);
+        frame.lineTo (8.0f, 5.0f);
+        juce::Path p;
+        juce::PathStrokeType (1.1f).createStrokedPath (p, frame);
+        juce::Path arrow;
+        arrow.startNewSubPath (4.5f, 5.5f);
+        arrow.lineTo (8.8f, 1.2f);
+        juce::Path a;
+        juce::PathStrokeType (1.1f).createStrokedPath (a, arrow);
+        p.addPath (a);
+        p.addTriangle (6.0f, 1.0f, 9.0f, 1.0f, 9.0f, 4.0f);
+        return p;
+    }
+
+    juce::Path dock()
+    {
+        // window with an arrow pointing in
+        juce::Path frame;
+        frame.startNewSubPath (5.0f, 2.0f);
+        frame.lineTo (1.5f, 2.0f);
+        frame.lineTo (1.5f, 8.5f);
+        frame.lineTo (8.0f, 8.5f);
+        frame.lineTo (8.0f, 5.0f);
+        juce::Path p;
+        juce::PathStrokeType (1.1f).createStrokedPath (p, frame);
+        juce::Path arrow;
+        arrow.startNewSubPath (8.8f, 1.2f);
+        arrow.lineTo (5.2f, 4.8f);
+        juce::Path a;
+        juce::PathStrokeType (1.1f).createStrokedPath (a, arrow);
+        p.addPath (a);
+        p.addTriangle (4.0f, 3.0f, 4.0f, 6.0f, 7.0f, 6.0f);
+        return p;
+    }
+}
+
 //==============================================================================
 LookAndFeel::LookAndFeel()
 {
@@ -545,6 +590,49 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
 
     g.setColour (colour);
     g.fillPath (icon, icon.getTransformToScaleToFit (iconArea, true));
+}
+
+//==============================================================================
+StateButton::StateButton (const juce::String& letter, juce::Colour on, const juce::String& tip)
+    : juce::Button (letter), onColour (on)
+{
+    setTooltip (tip);
+    setWantsKeyboardFocus (false);
+}
+
+void StateButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const bool on = getToggleState();
+
+    auto bg = on ? onColour : colours::panelDark;
+    if (down)
+        bg = bg.darker (0.2f);
+    else if (highlighted)
+        bg = bg.brighter (on ? 0.1f : 0.25f);
+
+    g.setColour (bg);
+    g.fillRoundedRectangle (r, 2.5f);
+    g.setColour (on ? onColour.darker (0.5f) : colours::border);
+    g.drawRoundedRectangle (r, 2.5f, 1.0f);
+
+    g.setColour (on ? colours::textDark : onColour.withMultipliedSaturation (0.75f).withMultipliedBrightness (0.9f));
+    g.setFont (font (juce::jmin (13.0f, (float) getHeight() * 0.62f), true));
+    g.drawText (getName(), getLocalBounds(), juce::Justification::centred);
+}
+
+void makeValueLabel (juce::Label& l, float fontHeight)
+{
+    l.setFont (font (fontHeight));
+    l.setEditable (true, true, false); // single click starts editing
+    l.setColour (juce::Label::textColourId, colours::text.withAlpha (0.8f));
+    l.setColour (juce::Label::backgroundColourId, colours::panelDark.withAlpha (0.6f));
+    l.setColour (juce::Label::outlineColourId, colours::border.withAlpha (0.6f));
+    l.setColour (juce::Label::backgroundWhenEditingColourId, colours::lcd);
+    l.setColour (juce::Label::textWhenEditingColourId, colours::lcdText);
+    l.setColour (juce::Label::outlineWhenEditingColourId, colours::accent);
+    l.setMouseCursor (juce::MouseCursor::IBeamCursor);
+    l.setTooltip (u8"Klicken und Wert eintippen, Enter bestätigt");
 }
 
 //==============================================================================
