@@ -34,14 +34,23 @@ namespace
         std::vector<BrowserItem> items;
     };
 
-    /** Audio files from the user's music folder (scanned on a background thread). */
+    /** Audio files of a folder (default: the user's music folder), scanned on a
+        background thread. The folder can be changed and is stored in the settings. */
     class FileSource final : public BrowserSource,
                              private juce::Thread,
                              private juce::AsyncUpdater
     {
     public:
-        FileSource() : juce::Thread ("SM Studio file scan") { startThread (juce::Thread::Priority::low); }
-        ~FileSource() override { stopThread (2000); }
+        explicit FileSource (juce::PropertySet& s) : juce::Thread ("SM Studio file scan"), settings (s)
+        {
+            rescan();
+        }
+
+        ~FileSource() override
+        {
+            stopThread (4000);
+            cancelPendingUpdate();
+        }
 
         juce::String getId() const override { return "files"; }
         juce::String getTitle() const override { return "Dateien"; }
@@ -52,31 +61,104 @@ namespace
             return items;
         }
 
+        juce::String getStatusText() override
+        {
+            const juce::ScopedLock sl (lock);
+            const auto root = getRoot();
+            if (scanning.load())
+                return juce::String (u8"Durchsuche ") + root.getFullPathName() + juce::String (u8" …");
+            if (! root.isDirectory())
+                return "Ordner nicht gefunden: " + root.getFullPathName();
+            if (items.empty())
+                return "Keine Audiodateien in " + root.getFullPathName()
+                     + juce::String (u8" – mit „Ordner …“ einen anderen Ordner wählen");
+            return juce::String ((int) items.size()) + (truncated ? "+ Dateien in " : " Dateien in ") + root.getFullPathName();
+        }
+
+        std::vector<Button> getButtons() override
+        {
+            return {
+                { juce::String (u8"Ordner …"), juce::String (u8"Ordner mit Audiodateien wählen"), [this] { chooseFolder(); } },
+                { "Aktualisieren", "Ordner neu einlesen", [this] { rescan(); } },
+            };
+        }
+
+        juce::File getRoot() const
+        {
+            const auto saved = settings.getValue ("browser.files.folder");
+            if (saved.isNotEmpty() && juce::File::isAbsolutePath (saved))
+                return juce::File (saved);
+            return juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+        }
+
+        void rescan()
+        {
+            stopThread (4000);
+            scanning = true;
+            startThread (juce::Thread::Priority::low);
+            if (onItemsChanged)
+                onItemsChanged();
+        }
+
     private:
+        void chooseFolder()
+        {
+            chooser = std::make_unique<juce::FileChooser> (u8"Ordner mit Audiodateien wählen", getRoot());
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                  [this] (const juce::FileChooser& fc)
+                                  {
+                                      const auto dir = fc.getResult();
+                                      if (dir.isDirectory())
+                                      {
+                                          settings.setValue ("browser.files.folder", dir.getFullPathName());
+                                          rescan();
+                                      }
+                                  });
+        }
+
         void run() override
         {
             std::vector<BrowserItem> found;
-            const auto root = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-            constexpr int maxFiles = 400;
+            const auto root = getRoot();
+            constexpr int maxFiles = 3000;
+            bool hitLimit = false;
 
             if (root.isDirectory())
             {
-                for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg",
-                                                                        juce::File::findFiles))
+                for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*",
+                                                                        juce::File::findFiles | juce::File::ignoreHiddenFiles))
                 {
-                    if (threadShouldExit() || (int) found.size() >= maxFiles)
+                    if (threadShouldExit())
+                        return;
+                    if ((int) found.size() >= maxFiles)
+                    {
+                        hitLimit = true;
                         break;
+                    }
 
                     const auto f = entry.getFile();
-                    found.push_back ({ "audiofile", f.getFullPathName(), f.getFileName(),
-                                       f.getParentDirectory().getRelativePathFrom (root.getParentDirectory()) });
+                    if (! f.hasFileExtension ("wav;wave;aif;aiff;flac;mp3;ogg"))
+                        continue;
+
+                    auto folder = f.getParentDirectory().getRelativePathFrom (root);
+                    if (folder == ".")
+                        folder = root.getFileName();
+                    found.push_back ({ "audiofile", f.getFullPathName(), f.getFileName(), folder });
                 }
             }
+
+            std::sort (found.begin(), found.end(), [] (auto& a, auto& b)
+            {
+                const auto c = a.category.compareNatural (b.category);
+                return c != 0 ? c < 0 : a.name.compareNatural (b.name) < 0;
+            });
 
             {
                 const juce::ScopedLock sl (lock);
                 items = std::move (found);
+                truncated = hitLimit;
             }
+            scanning = false;
 
             triggerAsyncUpdate(); // notify on the message thread
         }
@@ -87,8 +169,12 @@ namespace
                 onItemsChanged();
         }
 
+        juce::PropertySet& settings;
         juce::CriticalSection lock;
         std::vector<BrowserItem> items;
+        bool truncated = false;
+        std::atomic<bool> scanning { false };
+        std::unique_ptr<juce::FileChooser> chooser;
     };
 
     //==========================================================================
@@ -115,7 +201,7 @@ namespace
                 { "effect", "builtin:delay", "SM Delay", placeholderCategory },
             }));
 
-            fileSource = std::make_shared<FileSource>();
+            fileSource = std::make_shared<FileSource> (ctx.settings);
             reg.addBrowserSource (fileSource);
 
             // instrument: on an instrument track -> replace its instrument,

@@ -48,6 +48,7 @@ public:
 private:
     class PanelHost;
     class PanelWindow;
+    class PanelResizer;
 
     struct DockedPanel
     {
@@ -57,6 +58,7 @@ private:
         bool visible = true;
         bool detached = false;
         std::unique_ptr<PanelHost> host;
+        std::unique_ptr<PanelResizer> resizer; // drag bar at the inner edge while docked
         std::unique_ptr<PanelWindow> window; // only while detached (destroyed before host)
     };
 
@@ -76,6 +78,7 @@ private:
     std::unique_ptr<TransportBar> transport;
     std::unique_ptr<ArrangeView> arrange;
     std::vector<DockedPanel> panels;
+    std::unique_ptr<juce::TooltipWindow> tooltipWindow; // shows the hover help of all components
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

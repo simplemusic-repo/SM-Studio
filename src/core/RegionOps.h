@@ -31,6 +31,13 @@ Region withEnd (const Region&, Tick newEnd, const AudioSource*, const TempoMap&)
 std::optional<std::pair<Region, Region>> split (const Region&, Tick at, const AudioSource*,
                                                 const TempoMap&, IdGenerator&);
 
+/** Merges events of one track into a single event ("glue").
+    MIDI: always possible (notes keep their song positions).
+    Audio: only if all parts come from the same file and follow each other
+    seamlessly (e.g. after splitting) – otherwise nullopt with a reason.
+    The result keeps the id of the earliest event. */
+std::optional<Region> merge (std::vector<Region> parts, const Song&, juce::String& whyNot);
+
 /** Copy with fresh ids (region and notes). */
 Region duplicate (const Region&, IdGenerator&);
 

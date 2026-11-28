@@ -227,6 +227,21 @@ private:
     int requestedIndex;
 };
 
+class SetInsertBypass final : public Command
+{
+public:
+    SetInsertBypass (ObjectId track, ObjectId slot, bool b) : trackId (track), slotId (slot), bypass (b) {}
+
+    juce::String getName() const override { return "Effekt-Bypass"; }
+    bool perform (Song&) override;
+    void undo (Song&) override;
+
+private:
+    bool set (Song&, bool);
+    ObjectId trackId, slotId;
+    bool bypass;
+};
+
 class RemoveInsert final : public Command
 {
 public:

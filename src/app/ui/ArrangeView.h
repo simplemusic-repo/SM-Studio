@@ -78,7 +78,7 @@ private:
     void rebuildHeaders();
     void layoutHeaders();
     void updateScrollBars();
-    void showContextMenu();
+    void showContextMenu (Tick mouseTick);
 
     juce::Rectangle<int> getLaneArea() const;
     juce::Rectangle<int> getRulerArea() const;

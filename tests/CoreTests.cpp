@@ -203,6 +203,12 @@ public:
             h.undo();
             expectEquals (s.findTrack (id)->inserts[0].name, juce::String ("Comp"));
 
+            h.perform (std::make_unique<SetInsertBypass> (id, b.id, true));
+            expect (s.findTrack (id)->inserts[0].bypassed);
+            expect (! h.perform (std::make_unique<SetInsertBypass> (id, b.id, true)));
+            h.undo();
+            expect (! s.findTrack (id)->inserts[0].bypassed);
+
             h.perform (std::make_unique<SetInstrument> (id, "x:synth", "Synth"));
             expectEquals (s.findTrack (id)->instrumentName, juce::String ("Synth"));
             h.undo();

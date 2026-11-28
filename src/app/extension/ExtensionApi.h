@@ -38,23 +38,42 @@ class ExtensionRegistry;
 struct EditState
 {
     enum Tool { arrow = 0, range, split, eraser, pencil, mute };
-    enum Snap { snapOff = 0, snapBar, snapBeat, snap8th, snap16th };
+    enum Snap { snapOff = 0, snapBar, snapBeat, snap8th, snap16th, snapAdaptive };
 
     juce::Value tool { juce::var ((int) arrow) };
-    juce::Value snap { juce::var ((int) snapBar) };
+    juce::Value snap { juce::var ((int) snapAdaptive) };
+
+    /** Current zoom of the arrangement (set by the arrangement), used by the adaptive grid. */
+    double pixelsPerTick = 16.0 / (double) ticksPerQuarter;
+
+    /** Grid size in ticks for the current snap setting (0 = off). */
+    Tick gridTicks (const TempoMap& map) const
+    {
+        switch ((int) snap.getValue())
+        {
+            case snapBar:  return map.getTicksPerBar();
+            case snapBeat: return map.getTicksPerBeat();
+            case snap8th:  return ticksPerQuarter / 2;
+            case snap16th: return ticksPerQuarter / 4;
+            case snapAdaptive:
+            {
+                // the finest grid whose lines are at least ~14 px apart
+                const Tick candidates[] = { ticksPerQuarter / 8, ticksPerQuarter / 4, ticksPerQuarter / 2,
+                                            map.getTicksPerBeat(), map.getTicksPerBar(),
+                                            map.getTicksPerBar() * 2, map.getTicksPerBar() * 4 };
+                for (auto c : candidates)
+                    if ((double) c * pixelsPerTick >= 14.0)
+                        return c;
+                return map.getTicksPerBar() * 8;
+            }
+            default: return 0;
+        }
+    }
 
     /** Rounds a position to the current snap grid. */
     Tick snapTick (Tick t, const TempoMap& map) const
     {
-        Tick grid = 0;
-        switch ((int) snap.getValue())
-        {
-            case snapBar:  grid = map.getTicksPerBar(); break;
-            case snapBeat: grid = map.getTicksPerBeat(); break;
-            case snap8th:  grid = ticksPerQuarter / 2; break;
-            case snap16th: grid = ticksPerQuarter / 4; break;
-            default: break;
-        }
+        const auto grid = gridTicks (map);
         if (grid <= 0)
             return std::max<Tick> (0, t);
         return std::max<Tick> (0, ((t + grid / 2) / grid) * grid);
@@ -139,6 +158,17 @@ public:
     virtual juce::String getId() const = 0;
     virtual juce::String getTitle() const = 0;
     virtual std::vector<BrowserItem> getItems() = 0;
+
+    /** Optional line shown above the list (e.g. the scanned folder or "scanning ..."). */
+    virtual juce::String getStatusText() { return {}; }
+
+    /** Optional small buttons shown above the list (e.g. "Ordner ...", "Aktualisieren"). */
+    struct Button
+    {
+        juce::String text, tooltip;
+        std::function<void()> onClick;
+    };
+    virtual std::vector<Button> getButtons() { return {}; }
 
     /** Sources call this when their item list changed (e.g. after a plug-in scan). */
     std::function<void()> onItemsChanged;

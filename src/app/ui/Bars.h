@@ -57,9 +57,9 @@ private:
     theme::IconButton toStart { "Zum Anfang", theme::icons::toStart() },
                       rewind { u8"Zurückspulen", theme::icons::rewind() },
                       forward { "Vorspulen", theme::icons::forward() },
-                      stop { "Stopp", theme::icons::stop() },
+                      stop { "Stopp (zweimal: zum Anfang)", theme::icons::stop() },
                       play { "Wiedergabe (Leertaste)", theme::icons::play(), theme::colours::play },
-                      record { "Aufnahme (folgt in Etappe 7)", theme::icons::record(), theme::colours::record },
+                      record { "Aufnahme (folgt)", theme::icons::record(), theme::colours::record },
                       loop { "Loop (L oder /)", theme::icons::loop() },
                       metronome { "Metronom (C)", theme::icons::metronome() };
 

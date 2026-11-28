@@ -323,6 +323,47 @@ public:
             expect (! h.perform (std::make_unique<commands::UpdateRegion> (id1, id1, a, "nichts")));
         }
 
+        beginTest ("merge (glue)");
+        {
+            Song s;
+            CommandHistory h (s);
+            auto srcCopy = src;
+            srcCopy.id = s.newId();
+            h.perform (std::make_unique<commands::AddAudioSource> (srcCopy));
+
+            auto whole = a;
+            whole.sourceId = srcCopy.id;
+            IdGenerator localIds;
+            localIds.reserveUpTo (1000);
+            auto parts = regionops::split (whole, 2880, &srcCopy, s.getTempoMap(), localIds);
+            juce::String why;
+            auto merged = regionops::merge ({ parts->second, parts->first }, s, why);
+            expect (merged.has_value(), why);
+            expect (merged->id == whole.id);
+            expectEquals ((long long) merged->position, (long long) whole.position);
+            expectEquals ((long long) merged->length, (long long) whole.length);
+            expectEquals ((long long) merged->sourceOffsetSamples, 0LL);
+
+            auto moved = parts->second;
+            moved.position += 960; // gap -> not seamless
+            expect (! regionops::merge ({ parts->first, moved }, s, why).has_value());
+            expect (why.isNotEmpty());
+
+            Region m1, m2;
+            m1.id = { 900 }; m1.kind = Region::Kind::midi; m1.position = 0;    m1.length = 960;
+            m2.id = { 901 }; m2.kind = Region::Kind::midi; m2.position = 1920; m2.length = 960;
+            m1.notes.push_back ({ ObjectId { 910 }, 0, 480, 60, 0.8f });
+            m2.notes.push_back ({ ObjectId { 911 }, 240, 480, 64, 0.8f });
+            auto mm = regionops::merge ({ m1, m2 }, s, why);
+            expect (mm.has_value());
+            expectEquals ((long long) mm->length, 2880LL);
+            expectEquals ((int) mm->notes.size(), 2);
+            expectEquals ((long long) mm->notes[1].start, 2160LL);
+
+            expect (! regionops::merge ({ m1 }, s, why).has_value());
+            expect (! regionops::merge ({ m1, whole }, s, why).has_value());
+        }
+
         beginTest ("loop range is normalised");
         {
             Song s;

@@ -71,7 +71,8 @@ private:
     juce::OwnedArray<juce::TextButton> tabs;
     juce::TextEditor search;
     juce::ListBox list { "browser", this };
-    juce::Label hint;
+    juce::Label hint, status;
+    juce::OwnedArray<juce::TextButton> sourceButtons;
     int currentTab = 0;
     std::vector<Row> rows;
 

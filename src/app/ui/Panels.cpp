@@ -99,6 +99,9 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
         ctx.perform (std::make_unique<commands::RenameTrack> (shownTrack, nameLabel.getText().trim()));
     };
 
+    volume.setTooltip (u8"Lautstärke (Doppelklick: 0 dB)");
+    pan.setTooltip ("Panorama (Doppelklick: Mitte)");
+
     for (auto* l : { &typeLabel, &instrumentLabel })
     {
         l->setFont (font (12.5f));
@@ -325,6 +328,7 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
     for (size_t i = 0; i < sources.size(); ++i)
     {
         auto* b = tabs.add (new juce::TextButton (sources[i]->getTitle()));
+        b->setTooltip (sources[i]->getTitle() + juce::String (u8" anzeigen"));
         b->setClickingTogglesState (false);
         b->setWantsKeyboardFocus (false);
         b->onClick = [this, i] { selectTab ((int) i); };
@@ -337,6 +341,7 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
     }
 
     search.setTextToShowWhenEmpty ("Suchen", colours::textDim);
+    search.setTooltip ("Liste filtern");
     search.setFont (font (13.0f));
     search.onTextChange = [this] { reload(); };
     addAndMakeVisible (search);
@@ -346,7 +351,12 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
     list.setMultipleSelectionEnabled (false);
     addAndMakeVisible (list);
 
-    hint.setText (u8"Einträge auf das Arrangement ziehen", juce::dontSendNotification);
+    status.setFont (font (11.5f));
+    status.setColour (juce::Label::textColourId, colours::textDim);
+    status.setJustificationType (juce::Justification::topLeft);
+    addAndMakeVisible (status);
+
+    hint.setText (u8"Ziehen oder Doppelklick: ins Arrangement", juce::dontSendNotification);
     hint.setFont (font (12.0f));
     hint.setColour (juce::Label::textColourId, colours::textDim);
     hint.setJustificationType (juce::Justification::centred);
@@ -373,6 +383,24 @@ void BrowserPanel::reload()
 {
     rows.clear();
     auto& sources = ctx.registry.getBrowserSources();
+
+    // per-source buttons and status line
+    sourceButtons.clear();
+    status.setText ({}, juce::dontSendNotification);
+    if (currentTab >= 0 && currentTab < (int) sources.size())
+    {
+        auto source = sources[(size_t) currentTab];
+        status.setText (source->getStatusText(), juce::dontSendNotification);
+        for (auto& def : source->getButtons())
+        {
+            auto* b = sourceButtons.add (new juce::TextButton (def.text));
+            b->setTooltip (def.tooltip);
+            b->setWantsKeyboardFocus (false);
+            b->onClick = [fn = def.onClick] { if (fn) fn(); };
+            addAndMakeVisible (b);
+        }
+    }
+    resized();
 
     if (currentTab >= 0 && currentTab < (int) sources.size())
     {
@@ -501,7 +529,24 @@ void BrowserPanel::resized()
 
     r.removeFromTop (8);
     search.setBounds (r.removeFromTop (26));
-    r.removeFromTop (8);
+    r.removeFromTop (6);
+
+    if (! sourceButtons.isEmpty())
+    {
+        auto row = r.removeFromTop (24);
+        for (auto* b : sourceButtons)
+        {
+            b->setBounds (row.removeFromLeft (juce::jmin (110, row.getWidth())));
+            row.removeFromLeft (4);
+        }
+        r.removeFromTop (4);
+    }
+
+    if (status.getText().isNotEmpty())
+        status.setBounds (r.removeFromTop (30));
+    else
+        status.setBounds ({});
+
     hint.setBounds (r.removeFromBottom (22));
     list.setBounds (r);
 }
@@ -509,6 +554,144 @@ void BrowserPanel::resized()
 //==============================================================================
 // Console
 //==============================================================================
+/** Insert slots of one channel: click a slot for bypass/remove, an empty slot
+    to add an effect; effects can also be dropped from the browser. */
+class InsertsBox final : public juce::Component,
+                         public juce::DragAndDropTarget,
+                         public juce::SettableTooltipClient
+{
+public:
+    InsertsBox (AppContext& c, ObjectId track) : ctx (c), trackId (track)
+    {
+        setTooltip (u8"Inserts: Effekt hierher ziehen oder Klick auf + / auf einen Effekt");
+    }
+
+    static constexpr int numSlots = 3, slotHeight = 16, titleHeight = 14;
+    static int preferredHeight() { return titleHeight + numSlots * slotHeight + 2; }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds();
+        g.setColour (colours::textDim);
+        g.setFont (font (10.5f, true));
+        g.drawText ("INSERTS", r.removeFromTop (titleHeight), juce::Justification::centredLeft);
+
+        g.setColour (dropHover ? colours::accent.withAlpha (0.25f) : colours::panelDark);
+        g.fillRoundedRectangle (r.toFloat(), 3.0f);
+
+        const auto* t = ctx.song.findTrack (trackId);
+        const auto count = t != nullptr ? (int) t->inserts.size() : 0;
+
+        for (int i = 0; i < numSlots; ++i)
+        {
+            auto slot = r.removeFromTop (slotHeight).reduced (2, 1);
+            g.setFont (font (11.0f));
+
+            if (i < count && (i < numSlots - 1 || count == numSlots))
+            {
+                const auto& ins = t->inserts[(size_t) i];
+                g.setColour (ins.bypassed ? colours::panelLight : colours::header);
+                g.fillRoundedRectangle (slot.toFloat(), 2.0f);
+                g.setColour (ins.bypassed ? colours::textDim : colours::accent);
+                g.fillEllipse (slot.removeFromLeft (10).toFloat().withSizeKeepingCentre (5.0f, 5.0f));
+                g.setColour (ins.bypassed ? colours::textDim : colours::text);
+                g.drawText (ins.name, slot, juce::Justification::centredLeft, true);
+            }
+            else if (i == numSlots - 1 && count > numSlots)
+            {
+                g.setColour (colours::textDim);
+                g.drawText ("+" + juce::String (count - numSlots + 1) + " weitere", slot, juce::Justification::centred);
+            }
+            else if (i == count)
+            {
+                g.setColour (colours::textDim.withAlpha (0.8f));
+                g.drawText ("+", slot, juce::Justification::centred);
+            }
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        ctx.selection.selectTrack (trackId);
+        const auto index = (e.y - titleHeight) / slotHeight;
+        const auto* t = ctx.song.findTrack (trackId);
+        if (t == nullptr || index < 0)
+            return;
+
+        if (index < (int) t->inserts.size() && index < numSlots)
+        {
+            const auto slot = t->inserts[(size_t) index];
+            juce::PopupMenu m;
+            m.addSectionHeader (slot.name);
+            m.addItem (1, "Bypass", true, slot.bypassed);
+            m.addItem (2, "Entfernen");
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                             [&c = ctx, track = trackId, slot] (int result)
+                             {
+                                 if (result == 1) c.perform (std::make_unique<commands::SetInsertBypass> (track, slot.id, ! slot.bypassed));
+                                 if (result == 2) c.perform (std::make_unique<commands::RemoveInsert> (track, slot.id));
+                             });
+        }
+        else
+        {
+            showAddMenu();
+        }
+    }
+
+    void showAddMenu()
+    {
+        // offer the effects the browser knows
+        std::vector<BrowserItem> effects;
+        for (auto& src : ctx.registry.getBrowserSources())
+            for (auto& item : src->getItems())
+                if (item.kind == "effect")
+                    effects.push_back (item);
+
+        juce::PopupMenu m;
+        m.addSectionHeader (u8"Effekt hinzufügen");
+        for (size_t i = 0; i < effects.size(); ++i)
+            m.addItem ((int) i + 1, effects[i].name);
+
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                         [&c = ctx, track = trackId, effects] (int result)
+                         {
+                             if (result > 0 && result <= (int) effects.size())
+                                 addEffect (c, track, effects[(size_t) result - 1]);
+                         });
+    }
+
+    static void addEffect (AppContext& c, ObjectId track, const BrowserItem& item)
+    {
+        InsertSlot slot;
+        slot.id = c.song.newId();
+        slot.pluginId = item.id;
+        slot.name = item.name;
+        c.perform (std::make_unique<commands::AddInsert> (track, slot));
+    }
+
+    bool isInterestedInDragSource (const SourceDetails& d) override
+    {
+        auto item = BrowserItem::fromDragDescription (d.description);
+        return item && item->kind == "effect";
+    }
+
+    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+
+    void itemDropped (const SourceDetails& d) override
+    {
+        dropHover = false;
+        repaint();
+        if (auto item = BrowserItem::fromDragDescription (d.description))
+            addEffect (ctx, trackId, *item);
+    }
+
+private:
+    AppContext& ctx;
+    ObjectId trackId;
+    bool dropHover = false;
+};
+
 class ConsolePanel::Strip final : public juce::Component
 {
 public:
@@ -524,6 +707,7 @@ public:
         setupPanSlider (panKnob);
         panKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         panKnob.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        panKnob.setTooltip ("Panorama (Doppelklick: Mitte)");
         bindTrackSlider (panKnob, ctx, [this] { return trackId; }, Param::pan, false);
         addAndMakeVisible (panKnob);
 
@@ -540,6 +724,8 @@ public:
         }
         bindValueLabel (value, ctx, [this] { return trackId; }, Param::volumeDb);
         bindValueLabel (panValue, ctx, [this] { return trackId; }, Param::pan);
+
+        addAndMakeVisible (inserts);
 
         update();
     }
@@ -563,6 +749,7 @@ public:
             name = t->name;
             colour = t->colour;
         }
+        inserts.repaint();
         repaint();
     }
 
@@ -571,6 +758,20 @@ public:
         const bool selected = ctx.selection.getSelectedTrack() == trackId;
         g.setColour (selected ? colours::laneSelected.brighter (0.05f) : colours::panelLight);
         g.fillRect (getLocalBounds().reduced (1, 0));
+
+        // sends: arrive together with buses (stage 5)
+        if (! sendsArea.isEmpty())
+        {
+            auto r = sendsArea;
+            g.setColour (colours::textDim);
+            g.setFont (font (10.5f, true));
+            g.drawText ("SENDS", r.removeFromTop (14), juce::Justification::centredLeft);
+            g.setColour (colours::panelDark);
+            g.fillRoundedRectangle (r.toFloat(), 3.0f);
+            g.setColour (colours::textDim.withAlpha (0.6f));
+            g.setFont (font (10.5f));
+            g.drawFittedText ("folgt mit Bussen", r.reduced (2), juce::Justification::centred, 2);
+        }
 
         auto nameArea = getLocalBounds().removeFromBottom (24).reduced (1, 0);
         g.setColour (colour);
@@ -587,9 +788,25 @@ public:
     {
         auto r = getLocalBounds().reduced (6, 6);
         r.removeFromBottom (24);
-        panKnob.setBounds (r.removeFromTop (34).withSizeKeepingCentre (32, 32));
-        panValue.setBounds (r.removeFromTop (18).withSizeKeepingCentre (52, 17));
-        r.removeFromTop (5);
+
+        // inserts and sends only when there is enough height for a usable fader
+        const bool roomy = r.getHeight() > 300;
+        inserts.setVisible (roomy);
+        sendsArea = {};
+        if (roomy)
+        {
+            inserts.setBounds (r.removeFromTop (InsertsBox::preferredHeight()));
+            r.removeFromTop (4);
+            sendsArea = r.removeFromTop (14 + 20);
+            r.removeFromTop (6);
+        }
+
+        // pan knob with its value next to it
+        auto panRow = r.removeFromTop (30);
+        panKnob.setBounds (panRow.removeFromLeft (30));
+        panValue.setBounds (panRow.withSizeKeepingCentre (panRow.getWidth() - 4, 17));
+        r.removeFromTop (4);
+
         auto buttons = r.removeFromTop (20);
         mute.setBounds (buttons.removeFromLeft (buttons.getWidth() / 2 - 1));
         buttons.removeFromLeft (2);
@@ -607,6 +824,8 @@ private:
     juce::Slider fader, panKnob;
     StateButton mute { "M", colours::mute, "Stumm" }, solo { "S", colours::solo, "Solo" };
     juce::Label value, panValue;
+    InsertsBox inserts { ctx, trackId };
+    juce::Rectangle<int> sendsArea;
     juce::String name;
     juce::Colour colour;
 };

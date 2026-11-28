@@ -27,7 +27,7 @@ namespace
             reg.addPanel ({ "browser", "Browser", PanelLocation::right, 300, true,
                             [] (AppContext& c) { return std::make_unique<BrowserPanel> (c); } });
 
-            reg.addPanel ({ "console", "Konsole", PanelLocation::bottom, 340, false,
+            reg.addPanel ({ "console", "Konsole", PanelLocation::bottom, 460, false,
                             [] (AppContext& c) { return std::make_unique<ConsolePanel> (c); } });
         }
     };

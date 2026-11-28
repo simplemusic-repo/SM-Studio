@@ -32,7 +32,9 @@ Instrumente und Effekte im Browser sind bis zum Plug-in-Hosting (Etappe 3) Platz
 **Maus im Arrangement:** Event anklicken = auswählen (Strg/Cmd oder Umschalt: hinzufügen),
 ziehen = verschieben, Alt+Ziehen = kopieren, Ränder ziehen = Länge ändern, Umschalt beim Ziehen = ohne Raster.
 Leere Fläche ziehen = Auswahlrahmen. Lineal oben ziehen = Loop-Bereich, unten klicken = Abspielposition.
-Spurkopf hoch/runter ziehen = Spur umsortieren.
+Spurkopf hoch/runter ziehen = Spur umsortieren. Rechtsklick auf Events = Menü (teilen, zusammenfügen, kopieren …).
+Konsole, Inspector und Browser lassen sich an ihrem Rand stufenlos vergrößern. Das Raster „Adaptiv“ passt sich dem Zoom an.
+Im Browser unter „Dateien“ lässt sich mit „Ordner …“ der Ordner mit den eigenen Audiodateien wählen.
 
 ## Tastaturkürzel
 
@@ -47,6 +49,8 @@ Spurkopf hoch/runter ziehen = Spur umsortieren.
 | Entf | Ausgewählte Events löschen (sonst die ausgewählte Spur) |
 | D | Ausgewählte Events duplizieren |
 | Alt+X | Am Abspielpunkt teilen |
+| G | Ausgewählte Events zusammenfügen |
+| Strg/Cmd+X / C / V | Ausschneiden / Kopieren / Einfügen (am Abspielpunkt) |
 | Umschalt+M | Events stumm ein/aus |
 | Strg/Cmd+A, Esc | Alle Events auswählen / Auswahl aufheben |
 | T / Umschalt+T | Audio- / Instrumentenspur hinzufügen |

@@ -6,6 +6,8 @@
 #include "core/RegionOps.h"
 #include "extension/ExtensionRegistry.h"
 
+#include <map>
+
 namespace sms
 {
 
@@ -205,6 +207,7 @@ ArrangeView::ArrangeView (AppContext& c) : ctx (c)
     ctx.song.addListener (this);
     ctx.selection.addListener (this);
     ctx.pool.addChangeListener (this);
+    ctx.edit.pixelsPerTick = pixelsPerTick;
     rebuildHeaders();
     startTimerHz (30);
 }
@@ -362,6 +365,7 @@ void ArrangeView::zoomAround (double factor, int x)
 {
     const auto anchorTick = (double) xToTick ((double) x);
     pixelsPerTick = juce::jlimit (2.0 / (double) ticksPerQuarter, 600.0 / (double) ticksPerQuarter, pixelsPerTick * factor);
+    ctx.edit.pixelsPerTick = pixelsPerTick;
     viewStartTick = juce::jmax (0.0, anchorTick - ((double) x - headerWidth) / pixelsPerTick);
     updateScrollBars();
     repaint();
@@ -870,7 +874,9 @@ void ArrangeView::mouseDown (const juce::MouseEvent& e)
     {
         if (hit.region != nullptr && ! ctx.selection.isRegionSelected (hit.region->id))
             ctx.selection.setSelectedRegions ({ hit.region->id });
-        showContextMenu();
+        else if (hit.region == nullptr)
+            ctx.selection.clearRegions();
+        showContextMenu (snap (xToTick (e.position.x)));
         return;
     }
 
@@ -1259,41 +1265,94 @@ void ArrangeView::showAddTrackMenu (juce::Component* target)
     });
 }
 
-void ArrangeView::showContextMenu()
+void ArrangeView::showContextMenu (Tick mouseTick)
 {
     juce::PopupMenu m;
     const bool hasEvents = ! ctx.selection.getSelectedRegions().empty();
 
+    // menu entry for a registered action, with its shortcut and enabled state
+    std::map<int, juce::String> actionIds;
+    int nextId = 3000;
+    auto addAction = [&] (const juce::String& actionId, const juce::String& label)
+    {
+        auto* a = ctx.registry.findAction (actionId);
+        if (a == nullptr)
+            return;
+        juce::PopupMenu::Item item (label);
+        item.itemID = nextId;
+        item.isEnabled = ! a->isEnabled || a->isEnabled();
+        if (! a->keys.empty())
+            item.shortcutKeyDescription = a->keys.front().getTextDescriptionWithIcons();
+        m.addItem (std::move (item));
+        actionIds[nextId++] = actionId;
+    };
+
+    constexpr int splitHere = 2000;
+
     if (hasEvents)
     {
-        m.addItem (2001, u8"Löschen");
-        m.addItem (2002, "Duplizieren");
-        m.addItem (2003, "Am Abspielpunkt teilen");
-        m.addItem (2004, "Stumm ein/aus");
+        m.addItem (splitHere, "Hier teilen");
+        addAction ("edit.splitAtCursor", "Am Abspielpunkt teilen");
+        addAction ("edit.merge", u8"Zusammenfügen");
         m.addSeparator();
+        addAction ("edit.cut", "Ausschneiden");
+        addAction ("edit.copy", "Kopieren");
+        addAction ("edit.paste", u8"Einfügen");
+        addAction ("edit.duplicate", "Duplizieren");
+        m.addSeparator();
+        addAction ("edit.toggleMuteEvents", "Stumm ein/aus");
+        addAction ("transport.loopSelection", "Loop auf Auswahl");
+        addAction ("edit.delete", u8"Löschen");
+    }
+    else
+    {
+        addAction ("edit.paste", u8"Einfügen (am Abspielpunkt)");
+        m.addSeparator();
+
+        int i = 1;
+        for (auto& type : ctx.registry.getTrackTypes())
+            m.addItem (i++, type.displayName + juce::String (u8"spur hinzufügen"));
+
+        m.addSeparator();
+        m.addItem (1000, u8"Spur löschen", ctx.selection.getSelectedTrack().isValid());
     }
 
-    int i = 1;
-    for (auto& type : ctx.registry.getTrackTypes())
-        m.addItem (i++, type.displayName + juce::String (u8"spur hinzufügen"));
-
     const auto sel = ctx.selection.getSelectedTrack();
-    m.addSeparator();
-    m.addItem (1000, u8"Spur löschen", sel.isValid());
 
-    m.showMenuAsync ({}, [this, sel] (int result)
+    m.showMenuAsync ({}, [this, sel, mouseTick, actionIds] (int result)
     {
-        switch (result)
+        if (result == 1000)
         {
-            case 1000: ctx.registry.invoke ("track.delete"); return;
-            case 2001: ctx.registry.invoke ("edit.delete"); return;
-            case 2002: ctx.registry.invoke ("edit.duplicate"); return;
-            case 2003: ctx.registry.invoke ("edit.splitAtCursor"); return;
-            case 2004: ctx.registry.invoke ("edit.toggleMuteEvents"); return;
-            default: break;
+            ctx.registry.invoke ("track.delete");
         }
-
-        if (result > 0 && result <= (int) ctx.registry.getTrackTypes().size())
+        else if (result == splitHere)
+        {
+            const auto& map = ctx.song.getTempoMap();
+            std::vector<ObjectId> right;
+            ctx.history.beginTransaction ("Event teilen");
+            for (auto id : ctx.selection.getSelectedRegions())
+            {
+                auto* t = ctx.song.findTrackOfRegion (id);
+                if (t == nullptr)
+                    continue;
+                const auto trackId = t->id;
+                const auto r = *t->findRegion (id);
+                if (auto parts = regionops::split (r, mouseTick, ctx.song.findAudioSource (r.sourceId), map, ctx.song.getIds()))
+                {
+                    right.push_back (parts->second.id);
+                    ctx.perform (std::make_unique<commands::UpdateRegion> (trackId, trackId, parts->first, "Event teilen"));
+                    ctx.perform (std::make_unique<commands::AddRegion> (trackId, parts->second));
+                }
+            }
+            ctx.history.endTransaction();
+            if (! right.empty())
+                ctx.selection.setSelectedRegions (right);
+        }
+        else if (auto it = actionIds.find (result); it != actionIds.end())
+        {
+            ctx.registry.invoke (it->second);
+        }
+        else if (result > 0 && result <= (int) ctx.registry.getTrackTypes().size())
         {
             const auto index = ctx.song.indexOfTrack (sel);
             addTrack (ctx, ctx.registry.getTrackTypes()[(size_t) result - 1].id, index >= 0 ? index + 1 : -1);

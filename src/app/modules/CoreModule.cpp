@@ -4,6 +4,7 @@
 #include "Modules.h"
 
 #include <limits>
+#include <map>
 
 #include "SongHelpers.h"
 #include "core/Commands.h"
@@ -179,6 +180,170 @@ namespace
                 };
                 reg.addAction (std::move (a));
             }
+            // --- clipboard -------------------------------------------------------
+            struct ClipEntry { int trackOffset; Region region; };
+            auto clipboard = std::make_shared<std::vector<ClipEntry>>();
+
+            auto copySelection = [&ctx, clipboard, selectedEvents]
+            {
+                auto events = selectedEvents();
+                if (events.empty())
+                    return false;
+
+                int firstRow = std::numeric_limits<int>::max();
+                Tick first = std::numeric_limits<Tick>::max();
+                for (auto& [trackId, r] : events)
+                {
+                    firstRow = std::min (firstRow, ctx.song.indexOfTrack (trackId));
+                    first = std::min (first, r.position);
+                }
+
+                clipboard->clear();
+                for (auto& [trackId, r] : events)
+                {
+                    auto c = r;
+                    c.position -= first; // relative to the earliest event
+                    clipboard->push_back ({ ctx.song.indexOfTrack (trackId) - firstRow, std::move (c) });
+                }
+                return true;
+            };
+
+            {
+                ActionInfo a;
+                a.id = "edit.copy";
+                a.name = "Kopieren";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 31;
+                a.keys = { cmd ('c') };
+                a.isEnabled = hasEvents;
+                a.perform = [copySelection] { copySelection(); };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.cut";
+                a.name = "Ausschneiden";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 32;
+                a.keys = { cmd ('x') };
+                a.isEnabled = hasEvents;
+                a.perform = [&ctx, copySelection, selectedEvents]
+                {
+                    auto events = selectedEvents();
+                    if (! copySelection())
+                        return;
+                    ctx.history.beginTransaction ("Ausschneiden");
+                    for (auto& [trackId, r] : events)
+                        ctx.perform (std::make_unique<commands::RemoveRegion> (trackId, r.id));
+                    ctx.history.endTransaction();
+                    ctx.selection.clearRegions();
+                };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.paste";
+                a.name = u8"Einfügen (am Abspielpunkt)";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 33;
+                a.keys = { cmd ('v') };
+                a.isEnabled = [clipboard] { return ! clipboard->empty(); };
+                a.perform = [&ctx, clipboard]
+                {
+                    const auto& tracks = ctx.song.getTracks();
+                    if (clipboard->empty() || tracks.empty())
+                        return;
+
+                    auto baseRow = ctx.song.indexOfTrack (ctx.selection.getSelectedTrack());
+                    if (baseRow < 0)
+                        baseRow = 0;
+
+                    const auto& map = ctx.song.getTempoMap();
+                    const auto at = ctx.edit.snapTick (map.secondsToTicks (ctx.engine.getPositionSeconds()), map);
+                    std::vector<ObjectId> pasted;
+
+                    ctx.history.beginTransaction (u8"Einfügen");
+                    for (auto& entry : *clipboard)
+                    {
+                        const auto row = baseRow + entry.trackOffset;
+                        if (row >= (int) tracks.size())
+                            continue;
+
+                        const auto& track = tracks[(size_t) row];
+                        const bool fits = entry.region.kind == Region::Kind::audio ? track.typeId == "audio"
+                                                                                   : track.typeId == "instrument";
+                        if (! fits)
+                            continue;
+
+                        auto r = regionops::duplicate (entry.region, ctx.song.getIds());
+                        r.position += at;
+                        pasted.push_back (r.id);
+                        ctx.perform (std::make_unique<commands::AddRegion> (track.id, std::move (r)));
+                    }
+                    ctx.history.endTransaction();
+
+                    if (pasted.empty())
+                        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, u8"Einfügen",
+                            u8"Die kopierten Events passen nicht auf die ausgewählte Spur "
+                            u8"(Audio-Events brauchen eine Audiospur, MIDI-Events eine Instrumentenspur).");
+                    else
+                        ctx.selection.setSelectedRegions (pasted);
+                };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.merge";
+                a.name = u8"Zusammenfügen";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 55;
+                a.keys = { juce::KeyPress ('g') };
+                a.isEnabled = [&ctx] { return ctx.selection.getSelectedRegions().size() >= 2; };
+                a.perform = [&ctx, selectedEvents]
+                {
+                    // group by track, merge each group
+                    std::map<std::uint64_t, std::vector<Region>> byTrack;
+                    for (auto& [trackId, r] : selectedEvents())
+                        byTrack[trackId.value].push_back (r);
+
+                    juce::String problem;
+                    std::vector<ObjectId> result;
+                    ctx.history.beginTransaction (u8"Zusammenfügen");
+
+                    for (auto& [trackValue, parts] : byTrack)
+                    {
+                        if (parts.size() < 2)
+                            continue;
+
+                        juce::String why;
+                        auto merged = regionops::merge (parts, ctx.song, why);
+                        if (! merged)
+                        {
+                            problem = why;
+                            continue;
+                        }
+
+                        const ObjectId trackId { trackValue };
+                        for (auto& p : parts)
+                            if (p.id != merged->id)
+                                ctx.perform (std::make_unique<commands::RemoveRegion> (trackId, p.id));
+                        ctx.perform (std::make_unique<commands::UpdateRegion> (trackId, trackId, *merged, u8"Zusammenfügen"));
+                        result.push_back (merged->id);
+                    }
+
+                    ctx.history.endTransaction();
+
+                    if (! result.empty())
+                        ctx.selection.setSelectedRegions (result);
+
+                    if (result.empty() || problem.isNotEmpty())
+                        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, u8"Zusammenfügen",
+                                                                problem.isNotEmpty() ? problem
+                                                                                     : juce::String (u8"Mindestens zwei Events auf derselben Spur auswählen."));
+                };
+                reg.addAction (std::move (a));
+            }
+
             {
                 ActionInfo a;
                 a.id = "edit.toggleMuteEvents";

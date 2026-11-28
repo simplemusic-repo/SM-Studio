@@ -53,7 +53,7 @@ class MainComponent::PanelWindow final : public juce::DocumentWindow
 {
 public:
     PanelWindow (const juce::String& title, PanelHost& host)
-        : juce::DocumentWindow (juce::String (u8"SM Studio – ") + title, theme::colours::window, juce::DocumentWindow::closeButton)
+        : juce::DocumentWindow (juce::String (u8"SM Studio – ") + title, theme::colours::window, juce::DocumentWindow::allButtons)
     {
         setUsingNativeTitleBar (true);
         setContentNonOwned (&host, false);
@@ -75,6 +75,55 @@ public:
 
     std::function<void()> onClose;
     std::function<bool (const juce::KeyPress&)> onKey;
+};
+
+//==============================================================================
+/** Thin bar at the inner edge of a docked panel. Dragging it resizes the panel. */
+class MainComponent::PanelResizer final : public juce::Component,
+                                          public juce::SettableTooltipClient
+{
+public:
+    explicit PanelResizer (PanelLocation l) : location (l)
+    {
+        setMouseCursor (l == PanelLocation::bottom ? juce::MouseCursor::UpDownResizeCursor
+                                                   : juce::MouseCursor::LeftRightResizeCursor);
+        setTooltip (u8"Ziehen: Größe ändern");
+        setRepaintsOnMouseActivity (true);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (isMouseOverOrDragging() ? theme::colours::accent.withAlpha (0.8f) : theme::colours::border);
+        if (location == PanelLocation::bottom)
+            g.fillRect (getLocalBounds().withSizeKeepingCentre (getWidth(), 2));
+        else
+            g.fillRect (getLocalBounds().withSizeKeepingCentre (2, getHeight()));
+    }
+
+    void mouseDown (const juce::MouseEvent&) override { startSize = getSize ? getSize() : 0; }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! setSize)
+            return;
+        const auto dx = e.getDistanceFromDragStartX(), dy = e.getDistanceFromDragStartY();
+        switch (location)
+        {
+            case PanelLocation::bottom: setSize (startSize - dy); break;
+            case PanelLocation::left:   setSize (startSize + dx); break;
+            case PanelLocation::right:  setSize (startSize - dx); break;
+        }
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { if (onFinished) onFinished(); }
+
+    std::function<int()> getSize;
+    std::function<void (int)> setSize;
+    std::function<void()> onFinished;
+
+private:
+    PanelLocation location;
+    int startSize = 0;
 };
 
 //==============================================================================
@@ -106,6 +155,9 @@ MainComponent::MainComponent (AppContext& c, bool isHeadless) : ctx (c), headles
         menuBar = std::make_unique<juce::MenuBarComponent> (this);
         addAndMakeVisible (*menuBar);
     }
+
+    if (! headless)
+        tooltipWindow = std::make_unique<juce::TooltipWindow> (nullptr, 500);
 
     ctx.history.addListener (this);
     setWantsKeyboardFocus (true);
@@ -157,6 +209,20 @@ void MainComponent::createPanels()
     {
         const auto loc = p.location;
         p.host->onToggleDock = [this, loc] { setPanelDetached (loc, ! isPanelDetached (loc)); };
+
+        p.resizer = std::make_unique<PanelResizer> (loc);
+        p.resizer->getSize = [this, loc] { auto* dp = findPanel (loc); return dp != nullptr ? dp->size : 0; };
+        p.resizer->setSize = [this, loc] (int newSize)
+        {
+            if (auto* dp = findPanel (loc))
+            {
+                const auto maxSize = loc == PanelLocation::bottom ? getHeight() - 220 : getWidth() / 2 - 100;
+                dp->size = juce::jlimit (loc == PanelLocation::bottom ? 140 : 180, juce::jmax (200, maxSize), newSize);
+                resized();
+            }
+        };
+        p.resizer->onFinished = [this] { saveLayout(); };
+        addChildComponent (*p.resizer);
 
         if (p.detached)
         {
@@ -364,6 +430,9 @@ void MainComponent::resized()
     toolbar->setBounds (r.removeFromTop (44));
     transport->setBounds (r.removeFromBottom (64));
 
+    for (auto& p : panels)
+        p.resizer->setVisible (p.visible && ! p.detached);
+
     auto place = [&] (PanelLocation loc)
     {
         for (auto& p : panels)
@@ -371,11 +440,23 @@ void MainComponent::resized()
             if (p.location != loc || ! p.visible || p.detached)
                 continue;
 
+            constexpr int grip = 5;
+            const auto size = juce::jmin (p.size, (loc == PanelLocation::bottom ? r.getHeight() : r.getWidth()) - 150);
+
             switch (loc)
             {
-                case PanelLocation::bottom: p.host->setBounds (r.removeFromBottom (juce::jmin (p.size, r.getHeight() / 2))); break;
-                case PanelLocation::left:   p.host->setBounds (r.removeFromLeft (p.size)); break;
-                case PanelLocation::right:  p.host->setBounds (r.removeFromRight (p.size)); break;
+                case PanelLocation::bottom:
+                    p.host->setBounds (r.removeFromBottom (size));
+                    p.resizer->setBounds (p.host->getX(), p.host->getY() - grip / 2 - 1, p.host->getWidth(), grip);
+                    break;
+                case PanelLocation::left:
+                    p.host->setBounds (r.removeFromLeft (size));
+                    p.resizer->setBounds (p.host->getRight() - grip / 2 - 1, p.host->getY(), grip, p.host->getHeight());
+                    break;
+                case PanelLocation::right:
+                    p.host->setBounds (r.removeFromRight (size));
+                    p.resizer->setBounds (p.host->getX() - grip / 2, p.host->getY(), grip, p.host->getHeight());
+                    break;
             }
         }
     };
@@ -385,6 +466,9 @@ void MainComponent::resized()
     place (PanelLocation::left);
     place (PanelLocation::right);
     arrange->setBounds (r);
+
+    for (auto& p : panels)
+        p.resizer->toFront (false);
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)

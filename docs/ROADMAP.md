@@ -20,6 +20,9 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [x] Werkzeuge Pfeil/Teilen/Radiergummi/Stift/Stumm, Auswahlrahmen
 - [x] Spuren per Drag & Drop umsortieren
 - [x] Loop-Bereich (Lineal, Transport, Tastatur)
+- [x] Kontextmenü für Events, Zusammenfügen (G), Ausschneiden/Kopieren/Einfügen
+- [x] Raster „Adaptiv“ (abhängig vom Zoom), Panels stufenlos vergrößerbar, Tooltips überall
+- [x] Datei-Browser mit wählbarem Ordner, Inserts in der Konsole (Bypass/Entfernen/Hinzufügen)
 - [ ] später: Spurhöhe ändern, Fades/Event-Lautstärke per Maus, Streaming langer Dateien von der Platte, bessere Resampling-Qualität
 
 ## Etappe 3 – Plug-ins
@@ -32,7 +35,7 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [ ] Editor unten (F2), Noten zeichnen/verschieben/löschen, Velocity, Quantisieren
 
 ## Etappe 5 – Konsole
-- [ ] Busse, Sends, Ausgänge, Pegelanzeigen pro Kanal, Inserts in der Konsole
+- [ ] Busse, Sends, Ausgänge, Pegelanzeigen pro Kanal
 
 ## Etappe 6 – Automation
 - [ ] Automationsspuren für Mixer- und Plug-in-Parameter
