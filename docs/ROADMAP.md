@@ -27,12 +27,26 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [x] Werkzeuge im Rechtsklick-Menü
 - [ ] später: Spurhöhe ändern, Fades/Event-Lautstärke per Maus, Streaming langer Dateien von der Platte, bessere Resampling-Qualität
 
-## Etappe 3 – Plug-ins
-- [ ] VST3-Hosting (Windows/macOS), AU (macOS), Plug-in-Scan in separatem Prozess
-- [ ] Browser zeigt echte Instrumente/Effekte nach Hersteller/Kategorie
-- [ ] Plug-in-Fenster öffnen, Inserts umsortieren/bypass, Latenzausgleich
-- [ ] Instrumentenspuren spielen MIDI → Instrument (inkl. Transponieren/Anschlag aus dem Inspector)
-- [ ] „Öffnen“ im Inspector öffnet das Instrument-Fenster
+## ✅ Etappe 3 – Plug-ins
+- [x] VST3-Hosting (Windows/macOS), Audio Units (macOS)
+- [x] Plug-in-Suche im Hintergrund, automatisch beim ersten Start, Absturzschutz (abstürzende Plug-ins werden übersprungen), gespeicherte Liste
+- [x] Browser zeigt Instrumente/Effekte nach Hersteller, Art oder als Favoriten (nach Benutzung, Rechtsklick entfernt), Knopf ↻
+- [x] Instrumentenspuren spielen MIDI → Instrument (inkl. Transponieren/Anschlag), Note-Offs bei Stopp/Sprung/Loop
+- [x] Insert-Ketten mit Bypass, Plug-ins laufen auch im Stopp weiter (Hall-Fahnen)
+- [x] Plug-in-Fenster: „Öffnen“ im Inspector, Doppelklick / Menü auf einen Insert
+- [x] Eingebauter „SM Testsynth“ (funktioniert ohne Plug-ins, für Tests)
+- [x] Plug-in-Suche mit Fortschrittsfenster (DAW gesperrt, Abbrechen möglich), jedes Plug-in wird in eigenem Prozess geprüft (hängt es > 30 s oder stürzt es ab → übersprungen)
+- [x] Plug-in-Fenster nie im Vollbild, zu große Editoren mit Bildlaufleisten; Plug-in-Fenster bleiben vor dem Hauptfenster; Instrument-Symbolknopf im Spurkopf
+- [x] Inserts: Power-Knopf (Bypass), Öffnen-Knopf, Effekt auf belegten Platz ziehen = ersetzen
+- [x] Live-MIDI: Keyboards und Bildschirm-Klaviatur (F7) spielen die ausgewählte Instrumentenspur
+- [x] Menü „Einstellungen“: Audio (Soundkarte, Treiber inkl. ASIO, Abtastrate, Puffer), MIDI (Eingänge an/aus, Aktivitätsanzeige), Plug-ins, Farbschemata
+- [x] Einstellungen im Cubase-Stil: Seitenleiste (Audio, MIDI, Metronom, Plug-ins, Darstellung) mit Tabs; MIDI-Anschlüsse-Tabelle (Aktiv, Anzeigename, Status), MIDI-Filter (Aufnahme/Thru), neue Geräte automatisch aktiv; Audiotreiber-Auswahl, Ausgänge/Eingänge; Farbschema-Kacheln, Oberflächengröße
+- [x] Metronom: 5 Klänge, Lautstärke, Betonung, Vorzähler (1–4 Takte), Rechtsklick auf den Metronom-Knopf öffnet die Einstellungen
+- [x] Plug-ins nur mit Haupt-Stereobus (Multi-Outs/Sidechain aus, z. B. Kontakt), Absturzbericht crash.log mit Symbolen (.pdb)
+- [x] „Plug-ins suchen“ prüft alles neu, „Aktualisieren“ (↻) nur neue
+- [x] Soundkarten-Wechsel ohne Absturz/Knacksen (Plug-ins werden außerhalb des Audio-Threads neu vorbereitet)
+- [ ] später: Latenzausgleich (PDC), Plug-in-Zustand im Projekt speichern (mit Etappe 8),
+      Plug-in-Parameter-Automation (Etappe 6), Inserts per Drag & Drop umsortieren
 
 ## Etappe 4 – Piano Roll
 - [ ] Arpeggiator und MIDI-Effekte im Inspector
@@ -48,7 +62,9 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [ ] Audio- und MIDI-Aufnahme, Monitoring, Metronom-Vorzähler, ASIO unter Windows
 
 ## Etappe 8 – Projekte & Export
-- [ ] Speichern/Laden (Projektdatei + Audio-Pool), Autosave, zuletzt geöffnete Projekte
+- [ ] Startseite beim Programmstart (wie der Hub in Cubase 14): Neues Projekt (mit Vorlagen), Projekt öffnen,
+      zuletzt geöffnete Projekte, Setup (Audio/MIDI)
+- [ ] Speichern/Laden (Projektdatei + Audio-Pool, Plug-in-Zustände), Autosave, zuletzt geöffnete Projekte
 - [ ] Export als WAV/FLAC/MP3, Einstellungen (Audiogerät, MIDI)
 
 ## Etappe 9 – ARA

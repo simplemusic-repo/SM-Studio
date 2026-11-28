@@ -14,6 +14,59 @@ juce::Colour trackColour (int index)
     return juce::Colour (palette[((index % n) + n) % n]);
 }
 
+juce::StringArray schemeNames()
+{
+    return { "Studio Dunkel", "Graphit", "Mitternacht", "Hell" };
+}
+
+struct Scheme { juce::uint32 window, panel, panelDark, panelLight, header, headerLight, border, separator,
+                    laneA, laneB, laneSelected, gridBar, gridBeat, text, textDim, textDark, accent, accentDim,
+                    playhead, lcd, lcdText; };
+
+static const Scheme schemes[] = {
+        // Studio Dunkel (default)
+        { 0xff1b1c1f, 0xff2a2c31, 0xff222428, 0xff34373d, 0xff3b3f46, 0xff474b53, 0xff111214, 0xff3f434a,
+          0xff26282c, 0xff232529, 0xff2f3540, 0xff3a3e45, 0xff2e3136, 0xffd9dce1, 0xff8d929b, 0xff1a1b1e,
+          0xff3d9bff, 0xff2a5f99, 0xffe9eef5, 0xff111316, 0xff9fd2ff },
+        // Graphit: neutral grey, orange accent
+        { 0xff202020, 0xff2e2e2e, 0xff262626, 0xff393939, 0xff424242, 0xff4e4e4e, 0xff141414, 0xff474747,
+          0xff2a2a2a, 0xff262626, 0xff3a342d, 0xff434343, 0xff333333, 0xffe0e0e0, 0xff969696, 0xff1a1a1a,
+          0xffff8f2e, 0xff8a5424, 0xfff2f2f2, 0xff121212, 0xffffc58a },
+        // Mitternacht: dark blue, cyan accent
+        { 0xff10141c, 0xff1b2230, 0xff151b27, 0xff242d3d, 0xff2a3447, 0xff354158, 0xff090c12, 0xff2f3a4e,
+          0xff19202c, 0xff161c27, 0xff22324a, 0xff2c374b, 0xff222b3b, 0xffd6e2f2, 0xff8496b0, 0xff0d1118,
+          0xff44c8ff, 0xff1f5f80, 0xffe6f4ff, 0xff0a0e15, 0xff8fe1ff },
+        // Hell
+        { 0xffd4d7dc, 0xffe4e6ea, 0xffcfd3d8, 0xffeef0f2, 0xffc7cbd1, 0xffb8bdc5, 0xff9aa0a8, 0xffb2b7be,
+          0xffe8eaed, 0xffe0e3e7, 0xffcfdaeb, 0xffb5bbc3, 0xffd0d4d9, 0xff1d2026, 0xff59606b, 0xff111214,
+          0xff2f7fe0, 0xff9fc4f0, 0xff20242a, 0xff1b1f25, 0xff9fd2ff },
+    };
+
+
+SchemePreview schemePreview (int index)
+{
+    const auto& sc = schemes[(size_t) juce::jlimit (0, (int) std::size (schemes) - 1, index)];
+    return { juce::Colour (sc.window), juce::Colour (sc.panel), juce::Colour (sc.header), juce::Colour (sc.accent), juce::Colour (sc.text) };
+}
+
+void applyScheme (int index)
+{
+    using namespace colours;
+    const auto& sc = schemes[(size_t) juce::jlimit (0, (int) std::size (schemes) - 1, index)];
+    window = juce::Colour (sc.window);       panel = juce::Colour (sc.panel);
+    panelDark = juce::Colour (sc.panelDark); panelLight = juce::Colour (sc.panelLight);
+    header = juce::Colour (sc.header);       headerLight = juce::Colour (sc.headerLight);
+    border = juce::Colour (sc.border);       separator = juce::Colour (sc.separator);
+    laneA = juce::Colour (sc.laneA);         laneB = juce::Colour (sc.laneB);
+    laneSelected = juce::Colour (sc.laneSelected);
+    gridBar = juce::Colour (sc.gridBar);     gridBeat = juce::Colour (sc.gridBeat);
+    text = juce::Colour (sc.text);           textDim = juce::Colour (sc.textDim);
+    textDark = juce::Colour (sc.textDark);
+    accent = juce::Colour (sc.accent);       accentDim = juce::Colour (sc.accentDim);
+    playhead = juce::Colour (sc.playhead);
+    lcd = juce::Colour (sc.lcd);             lcdText = juce::Colour (sc.lcdText);
+}
+
 juce::FontOptions font (float height, bool bold)
 {
     return juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain);
@@ -272,6 +325,11 @@ namespace icons
 //==============================================================================
 LookAndFeel::LookAndFeel()
 {
+    refreshColours();
+}
+
+void LookAndFeel::refreshColours()
+{
     using namespace colours;
 
     setColourScheme ({ panel, window, panelLight, separator, text, accent, juce::Colours::white, panelLight, text });
@@ -336,10 +394,8 @@ void LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, cons
     else if (highlighted)
         base = base.brighter (0.12f);
 
-    g.setGradientFill (juce::ColourGradient (base.brighter (0.06f), 0, r.getY(), base.darker (0.08f), 0, r.getBottom(), false));
-    g.fillRoundedRectangle (r, 3.0f);
-    g.setColour (colours::border);
-    g.drawRoundedRectangle (r, 3.0f, 1.0f);
+    g.setColour (base); // flat, no gradient
+    g.fillRoundedRectangle (r, 2.0f);
 }
 
 void LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool)
@@ -403,32 +459,20 @@ void LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int 
         auto cap = juce::Rectangle<float> (capW, faderCapHeight).withCentre ({ cx, pos });
         const bool active = s.isMouseOverOrDragging();
 
-        g.setColour (juce::Colours::black.withAlpha (0.45f));
-        g.fillRoundedRectangle (cap.translated (0.0f, 2.0f), 3.0f);
+        // flat cap (no shadow, no gradient) with thin grip lines and a centre line
+        g.setColour (active ? colours::headerLight.brighter (0.15f) : colours::headerLight);
+        g.fillRoundedRectangle (cap, 2.0f);
 
-        auto body = colours::headerLight.brighter (active ? 0.25f : 0.12f);
-        g.setGradientFill (juce::ColourGradient (body.brighter (0.25f), 0, cap.getY(),
-                                                 body.darker (0.35f), 0, cap.getBottom(), false));
-        g.fillRoundedRectangle (cap, 3.0f);
-
-        // grip ridges above and below the centre line
+        g.setColour (colours::panelDark.withAlpha (0.7f));
         for (int i = 1; i <= 3; ++i)
         {
-            const auto off = (float) i * 4.5f + 2.0f;
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            g.fillRect (cap.getX() + 4.0f, pos - off, capW - 8.0f, 1.0f);
-            g.fillRect (cap.getX() + 4.0f, pos + off, capW - 8.0f, 1.0f);
-            g.setColour (juce::Colours::white.withAlpha (0.12f));
-            g.fillRect (cap.getX() + 4.0f, pos - off + 1.0f, capW - 8.0f, 1.0f);
-            g.fillRect (cap.getX() + 4.0f, pos + off + 1.0f, capW - 8.0f, 1.0f);
+            const auto off = (float) i * 5.0f + 2.0f;
+            g.fillRect (cap.getX() + 5.0f, pos - off, capW - 10.0f, 1.0f);
+            g.fillRect (cap.getX() + 5.0f, pos + off, capW - 10.0f, 1.0f);
         }
 
-        // centre line marks the exact value
-        g.setColour (active ? colours::accent.brighter (0.3f) : juce::Colours::white.withAlpha (0.9f));
+        g.setColour (active ? colours::accent : colours::text);
         g.fillRect (cap.getX() + 2.0f, pos - 1.0f, capW - 4.0f, 2.0f);
-
-        g.setColour (colours::border);
-        g.drawRoundedRectangle (cap, 3.0f, 1.0f);
     }
     else
     {
@@ -485,6 +529,55 @@ void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int 
     g.setColour (colours::text);
     g.drawLine (juce::Line<float> (centre, centre.getPointOnCircumference (radius - 3, angle)), 1.5f);
 }
+
+void LookAndFeel::drawProgressBar (juce::Graphics& g, juce::ProgressBar&, int width, int height, double progress,
+                                   const juce::String& text)
+{
+    auto r = juce::Rectangle<float> ((float) width, (float) height);
+    g.setColour (colours::panelDark);
+    g.fillRoundedRectangle (r, 3.0f);
+
+    if (progress >= 0.0 && progress <= 1.0)
+    {
+        g.setColour (colours::accent);
+        g.fillRoundedRectangle (r.withWidth (r.getWidth() * (float) progress), 3.0f);
+    }
+
+    if (text.isNotEmpty())
+    {
+        g.setColour (colours::text);
+        g.setFont (font (12.5f, true));
+        g.drawText (text, r, juce::Justification::centred);
+    }
+}
+
+int LookAndFeel::getTabButtonBestWidth (juce::TabBarButton& b, int depth)
+{
+    return juce::jmax (depth * 2, (int) juce::GlyphArrangement::getStringWidth (juce::Font (font (14.0f)), b.getButtonText()) + 28);
+}
+
+void LookAndFeel::drawTabButton (juce::TabBarButton& b, juce::Graphics& g, bool isMouseOver, bool)
+{
+    const bool active = b.isFrontTab();
+    auto r = b.getActiveArea().toFloat();
+    g.setColour (active ? colours::panel : (isMouseOver ? colours::panelLight : colours::panelDark));
+    g.fillRect (r);
+    if (active)
+    {
+        g.setColour (colours::accent);
+        g.fillRect (r.removeFromBottom (2.0f));
+    }
+    g.setColour (active ? colours::text : colours::textDim);
+    g.setFont (font (14.0f));
+    g.drawText (b.getButtonText(), b.getTextArea(), juce::Justification::centred, true);
+}
+
+void LookAndFeel::drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics& g)
+{
+    g.fillAll (colours::panelDark);
+}
+
+void LookAndFeel::drawTabAreaBehindFrontButton (juce::TabbedButtonBar&, juce::Graphics&, int, int) {}
 
 void LookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box)
 {
@@ -572,10 +665,8 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
         else if (highlighted)
             base = base.brighter (0.12f);
 
-        g.setGradientFill (juce::ColourGradient (base.brighter (0.07f), 0, r.getY(), base.darker (0.1f), 0, r.getBottom(), false));
-        g.fillRoundedRectangle (r, 3.0f);
-        g.setColour (colours::border);
-        g.drawRoundedRectangle (r, 3.0f, 1.0f);
+        g.setColour (base); // flat
+        g.fillRoundedRectangle (r, 2.0f);
     }
     else if (highlighted || down)
     {
@@ -616,7 +707,9 @@ void StateButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
     g.setColour (on ? onColour.darker (0.5f) : colours::border);
     g.drawRoundedRectangle (r, 2.5f, 1.0f);
 
-    g.setColour (on ? colours::textDark : onColour.withMultipliedSaturation (0.75f).withMultipliedBrightness (0.9f));
+    const bool lightTheme = colours::panelDark.getPerceivedBrightness() > 0.5f;
+    const auto offColour = lightTheme ? onColour.darker (0.9f) : onColour.withMultipliedSaturation (0.75f).withMultipliedBrightness (0.9f);
+    g.setColour (on ? colours::textDark : offColour);
     g.setFont (font (juce::jmin (13.0f, (float) getHeight() * 0.62f), true));
     g.drawText (getName(), getLocalBounds(), juce::Justification::centred);
 }
@@ -638,7 +731,7 @@ void makeValueLabel (juce::Label& l, float fontHeight)
 //==============================================================================
 void drawPanelHeader (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title)
 {
-    g.setGradientFill (juce::ColourGradient (colours::header, 0, (float) area.getY(), colours::panelLight, 0, (float) area.getBottom(), false));
+    g.setColour (colours::header); // flat
     g.fillRect (area);
     g.setColour (colours::border);
     g.drawHorizontalLine (area.getBottom() - 1, (float) area.getX(), (float) area.getRight());

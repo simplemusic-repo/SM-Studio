@@ -373,6 +373,40 @@ void AddInsert::undo (Song& s)
 }
 
 //==============================================================================
+bool ReplaceInsert::perform (Song& s)
+{
+    auto* t = s.findTrack (trackId);
+    if (t == nullptr)
+        return false;
+    auto it = std::find_if (t->inserts.begin(), t->inserts.end(), [this] (auto& x) { return x.id == oldSlotId; });
+    if (it == t->inserts.end())
+        return false;
+
+    return s.modifyTrack (trackId, [this] (Track& tr)
+    {
+        for (auto& x : tr.inserts)
+            if (x.id == oldSlotId)
+            {
+                old = x;
+                x = slot;
+            }
+    });
+}
+
+void ReplaceInsert::undo (Song& s)
+{
+    if (! old)
+        return;
+    s.modifyTrack (trackId, [this] (Track& tr)
+    {
+        for (auto& x : tr.inserts)
+            if (x.id == slot.id)
+                x = *old;
+    });
+    old.reset();
+}
+
+//==============================================================================
 bool SetInsertBypass::set (Song& s, bool value)
 {
     auto* t = s.findTrack (trackId);

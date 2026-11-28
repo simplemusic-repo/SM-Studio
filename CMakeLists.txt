@@ -16,7 +16,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # the Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Windows release builds also write a .pdb (debug symbols) so crash reports
+# (crash.log) show function names. The .exe stays optimised.
+if(MSVC)
+    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+endif()
+
 option(SMS_BUILD_TESTS "Build the unit tests" ON)
+set(SMS_ASIO_SDK_DIR "" CACHE PATH "Windows: folder of the Steinberg ASIO SDK (GPLv3 option) to enable ASIO")
 
 # ---------------------------------------------------------------------------
 # JUCE (AGPLv3). For offline/local builds pass
@@ -68,8 +76,19 @@ target_link_libraries(sms_juce
         juce::juce_recommended_warning_flags)
 target_compile_definitions(sms_juce PUBLIC
     JUCE_STANDALONE_APPLICATION=1
-    JUCE_PLUGINHOST_VST3=0
-    JUCE_PLUGINHOST_AU=0)
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=$<BOOL:${APPLE}>
+    JUCE_PLUGINHOST_LV2=0
+    JUCE_PLUGINHOST_LADSPA=0)
+# ASIO (Windows): needs the Steinberg ASIO SDK (available under GPLv3 since 10/2025)
+if(WIN32 AND SMS_ASIO_SDK_DIR AND EXISTS "${SMS_ASIO_SDK_DIR}/common/iasiodrv.h")
+    message(STATUS "ASIO enabled: ${SMS_ASIO_SDK_DIR}")
+    target_compile_definitions(sms_juce PUBLIC JUCE_ASIO=1)
+    target_include_directories(sms_juce PRIVATE "${SMS_ASIO_SDK_DIR}/common")
+elseif(WIN32)
+    message(WARNING "ASIO SDK not found (SMS_ASIO_SDK_DIR) - building without ASIO")
+endif()
+
 target_include_directories(sms_juce INTERFACE
     $<TARGET_PROPERTY:sms_juce,INCLUDE_DIRECTORIES>)
 target_compile_definitions(sms_juce INTERFACE

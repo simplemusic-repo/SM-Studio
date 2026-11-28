@@ -213,6 +213,13 @@ public:
             h.undo();
             expect (! s.findTrack (id)->inserts[0].bypassed);
 
+            InsertSlot c { s.newId(), "x:reverb", "Reverb", false };
+            h.perform (std::make_unique<ReplaceInsert> (id, b.id, c));
+            expectEquals (s.findTrack (id)->inserts[0].name, juce::String ("Reverb"));
+            expectEquals ((int) s.findTrack (id)->inserts.size(), 2);
+            h.undo();
+            expectEquals (s.findTrack (id)->inserts[0].name, juce::String ("Comp"));
+
             h.perform (std::make_unique<SetInstrument> (id, "x:synth", "Synth"));
             expectEquals (s.findTrack (id)->instrumentName, juce::String ("Synth"));
             h.undo();

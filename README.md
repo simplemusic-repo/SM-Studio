@@ -6,7 +6,7 @@ Inspector links, Browser rechts, Konsole unten, Transportleiste unten.
 
 > *A free, open-source, linear DAW for Windows and macOS, written in C++ with JUCE.*
 
-**Status:** frühe Entwicklung (Etappe 2 – Audio-Wiedergabe und Bearbeitung). Noch nicht für echte Produktionen geeignet.
+**Status:** frühe Entwicklung (Etappe 3 – Plug-ins). Noch nicht für echte Produktionen geeignet.
 Siehe [Roadmap](docs/ROADMAP.md).
 
 ![Screenshot](docs/screenshot.png)
@@ -27,7 +27,18 @@ Siehe [Roadmap](docs/ROADMAP.md).
 - Audioausgabe mit Transport (Play/Stop/Positionieren) und Metronom
 - Menüs und Tastaturkürzel kommen vollständig aus dem Modulsystem
 
-Instrumente und Effekte im Browser sind bis zum Plug-in-Hosting (Etappe 3) Platzhalter.
+**Plug-ins:** Beim ersten Start sucht SM Studio im Hintergrund nach installierten VST3-Plug-ins
+(am Mac auch Audio Units). Danach erneut über Browser → Instrumente/Effekte → „Plug-ins suchen“.
+Instrument aus dem Browser ins Arrangement ziehen = neue Instrumentenspur; Effekt auf eine Spur oder
+einen Kanal ziehen = Insert. Plug-in-Fenster: „Öffnen“ im Inspector bzw. Doppelklick auf einen Insert.
+Ohne eigene Plug-ins kann man mit dem eingebauten „SM Testsynth“ testen.
+
+**Einstellungen** (Menü „Einstellungen“, Strg/Cmd+,): Soundkarte und Treiber (Windows: ASIO), Abtastrate,
+Puffergröße, MIDI-Eingänge, Plug-in-Suche und Farbschema. MIDI-Keyboards und die Bildschirm-Klaviatur (F7)
+spielen die ausgewählte Instrumentenspur.
+
+ASIO-Unterstützung nutzt das Steinberg ASIO SDK unter dessen GPLv3-Lizenzoption; „ASIO“ ist eine Marke der
+Steinberg Media Technologies GmbH.
 
 **Maus im Arrangement:** Event anklicken = auswählen (Strg/Cmd oder Umschalt: hinzufügen),
 ziehen = verschieben, Alt+Ziehen = kopieren, Ränder ziehen = Länge ändern, Umschalt beim Ziehen = ohne Raster.

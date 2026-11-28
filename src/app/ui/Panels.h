@@ -63,8 +63,10 @@ private:
     juce::var getDragSourceDescription (const juce::SparseSet<int>&) override;
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
     juce::String getTooltipForRow (int row) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
 
     void selectTab (int index);
+    void setSortMode (int mode);
     void reload();
 
     struct Row
@@ -80,6 +82,15 @@ private:
     juce::ListBox list { "browser", this };
     juce::Label hint, status;
     juce::OwnedArray<juce::TextButton> sourceButtons;
+
+    /** "Hersteller | Art | Favoriten" as tabs. */
+    struct SortTabs final : public juce::TabbedButtonBar
+    {
+        SortTabs() : juce::TabbedButtonBar (juce::TabbedButtonBar::TabsAtTop) {}
+        std::function<void (int)> onChange;
+        void currentTabChanged (int index, const juce::String&) override { if (onChange) onChange (index); }
+    };
+    SortTabs sortTabs;
     std::map<int, std::unique_ptr<juce::Component>> customViews; // per tab, created on first use
     juce::Component* activeView = nullptr;
     int currentTab = 0;

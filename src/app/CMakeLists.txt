@@ -21,6 +21,8 @@ target_sources(SMStudio PRIVATE
     modules/TransportModule.cpp
     modules/BrowserModule.cpp
     modules/PanelsModule.cpp
+    modules/MidiModule.cpp
+    modules/SettingsModule.cpp
     ui/Theme.h
     ui/Theme.cpp
     ui/Bars.h
@@ -30,7 +32,13 @@ target_sources(SMStudio PRIVATE
     ui/Panels.h
     ui/Panels.cpp
     ui/MainComponent.h
-    ui/MainComponent.cpp)
+    ui/MainComponent.cpp
+    ui/PluginScanDialog.h
+    ui/PluginScanDialog.cpp
+    ui/PluginWindows.h
+    ui/PluginWindows.cpp
+    ui/SettingsWidgets.h
+    ui/SettingsWidgets.cpp)
 
 target_include_directories(SMStudio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

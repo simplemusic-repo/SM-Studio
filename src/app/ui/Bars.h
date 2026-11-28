@@ -44,6 +44,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
     void refreshToggles();
 
 private:
@@ -62,6 +63,7 @@ private:
                       record { "Aufnahme (folgt)", theme::icons::record(), theme::colours::record },
                       loop { "Loop (L oder /)", theme::icons::loop() },
                       metronome { "Metronom (C)", theme::icons::metronome() };
+    bool metronomeRightClick = false;
 
     juce::Label tempo, signature;
     juce::TextButton editButton { "Edit" }, mixButton { "Mix" }, browseButton { "Browse" }, inspectorButton { "Inspector" };

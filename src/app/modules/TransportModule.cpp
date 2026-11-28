@@ -111,7 +111,11 @@ namespace
             metro.menuOrder = 60;
             metro.separatorBefore = true;
             metro.keys = { juce::KeyPress ('c') };
-            metro.perform = [&engine] { engine.setMetronomeEnabled (! engine.isMetronomeEnabled()); };
+            metro.perform = [&engine, &settings = ctx.settings]
+            {
+                engine.setMetronomeEnabled (! engine.isMetronomeEnabled());
+                settings.setValue ("metronome.enabled", engine.isMetronomeEnabled());
+            };
             metro.isTicked = [&engine] { return engine.isMetronomeEnabled(); };
             reg.addAction (std::move (metro));
         }

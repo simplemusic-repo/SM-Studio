@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "engine/Metronome.h"
+#include "engine/PluginHost.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -50,5 +51,51 @@ public:
 };
 
 static MetronomeTests metronomeTests;
+
+//==============================================================================
+class PluginHostInfoTests final : public juce::UnitTest
+{
+public:
+    PluginHostInfoTests() : juce::UnitTest ("PluginHost info", "SMStudio") {}
+
+    void runTest() override
+    {
+        beginTest ("plug-in categories become short German type names");
+        expectEquals (PluginHost::describeCategory ("Fx|Reverb", false), juce::String ("Hall"));
+        expectEquals (PluginHost::describeCategory ("Fx|Dynamics", false), juce::String ("Dynamik"));
+        expectEquals (PluginHost::describeCategory ("Instrument|Synth", true), juce::String ("Synthesizer"));
+        expectEquals (PluginHost::describeCategory ("Fx|Stereo|EQ", false), juce::String ("EQ"));
+        expectEquals (PluginHost::describeCategory ("", false), juce::String ("Sonstige"));
+        expectEquals (PluginHost::describeCategory ("Instrument", true), juce::String ("Instrument"));
+        expectEquals (PluginHost::describeCategory ("Fx|Gizmo", false), juce::String ("Gizmo"));
+
+        beginTest ("usage counts are stored and can be removed");
+        auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("sms-usage-test");
+        folder.deleteRecursively();
+        {
+            PluginHost host (folder);
+            host.noteUsed ("a");
+            host.noteUsed ("a");
+            host.noteUsed ("b");
+            expectEquals (host.getUsageCount ("a"), 2);
+            expectEquals (host.getUsageCount ("c"), 0);
+        }
+        {
+            PluginHost host (folder); // reloaded from usage.xml
+            expectEquals (host.getUsageCount ("a"), 2);
+            expectEquals (host.getUsageCount ("b"), 1);
+            host.forgetUsage ("a");
+            expectEquals (host.getUsageCount ("a"), 0);
+        }
+        {
+            PluginHost host (folder);
+            expectEquals (host.getUsageCount ("a"), 0);
+            expectEquals (host.getUsageCount ("b"), 1);
+        }
+        folder.deleteRecursively();
+    }
+};
+
+static PluginHostInfoTests pluginHostInfoTests;
 
 } // namespace sms

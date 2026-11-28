@@ -11,6 +11,7 @@
 #include "SongHelpers.h"
 #include "core/Commands.h"
 #include "extension/ExtensionRegistry.h"
+#include "ui/PluginScanDialog.h"
 #include "ui/Theme.h"
 
 namespace sms
@@ -18,21 +19,116 @@ namespace sms
 
 namespace
 {
-    const juce::String placeholderCategory = "SM Studio (Platzhalter bis Plug-in-Hosting)";
-
-    class StaticSource final : public BrowserSource
+    /** Instruments or effects: built-in ones plus the scanned plug-ins, grouped by
+        manufacturer, by type, or as favourites (most used first). */
+    class PluginSource final : public BrowserSource,
+                               private juce::ChangeListener
     {
     public:
-        StaticSource (juce::String i, juce::String t, std::vector<BrowserItem> it)
-            : id (std::move (i)), title (std::move (t)), items (std::move (it)) {}
+        enum SortMode { byManufacturer, byType, favourites };
 
-        juce::String getId() const override { return id; }
-        juce::String getTitle() const override { return title; }
-        std::vector<BrowserItem> getItems() override { return items; }
+        PluginSource (AppContext& c, bool instrumentsOnly) : ctx (c), host (c.plugins), instruments (instrumentsOnly)
+        {
+            host.addChangeListener (this);
+        }
+
+        ~PluginSource() override { host.removeChangeListener (this); }
+
+        juce::String getId() const override { return instruments ? "instruments" : "effects"; }
+        juce::String getTitle() const override { return instruments ? "Instrumente" : "Effekte"; }
+
+        juce::StringArray getSortModes() override { return { "Hersteller", "Art", "Favoriten" }; }
+        void setSortMode (int m) override { mode = (SortMode) juce::jlimit (0, 2, m); }
+        bool keepsItemOrder() override { return mode == favourites; }
+
+        std::vector<BrowserItem> getItems() override
+        {
+            std::vector<BrowserItem> items;
+            std::vector<int> counts;
+
+            for (auto& e : host.getEntries())
+            {
+                if (e.isInstrument != instruments)
+                    continue;
+
+                const auto maker = e.manufacturer + (e.format.isNotEmpty() && e.format != "Eingebaut" ? " (" + e.format + ")" : juce::String());
+
+                if (mode == favourites)
+                {
+                    const auto n = host.getUsageCount (e.id);
+                    if (n <= 0)
+                        continue;
+                    items.push_back ({ instruments ? "instrument" : "effect", e.id, e.name, "Meistbenutzt" });
+                    counts.push_back (n);
+                }
+                else
+                {
+                    items.push_back ({ instruments ? "instrument" : "effect", e.id, e.name,
+                                       mode == byType ? e.category : maker });
+                }
+            }
+
+            if (mode == favourites)
+            {
+                std::vector<size_t> order (items.size());
+                for (size_t i = 0; i < order.size(); ++i)
+                    order[i] = i;
+                std::stable_sort (order.begin(), order.end(), [&] (size_t a, size_t b)
+                {
+                    if (counts[a] != counts[b])
+                        return counts[a] > counts[b];
+                    return items[a].name.compareNatural (items[b].name) < 0;
+                });
+
+                std::vector<BrowserItem> sorted;
+                for (auto i : order)
+                    sorted.push_back (items[i]);
+                return sorted;
+            }
+
+            std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.name.compareNatural (b.name) < 0; });
+            return items;
+        }
+
+        juce::String getStatusText() override
+        {
+            if (mode == favourites && ! host.isScanning())
+                return getItems().empty() ? juce::String (u8"Noch keine Favoriten – benutzte Plug-ins erscheinen hier automatisch")
+                                          : juce::String (u8"Rechtsklick: aus Favoriten entfernen");
+            return host.getStatusText();
+        }
+
+        std::vector<Button> getButtons() override
+        {
+            return { { juce::String (u8"↻"), u8"Aktualisieren: nach neu installierten Plug-ins suchen",
+                       [this] { startPluginScanWithProgress (ctx); } } };
+        }
+
+        std::vector<MenuEntry> getItemMenu (const BrowserItem& item) override
+        {
+            std::vector<MenuEntry> m;
+            if (host.getUsageCount (item.id) > 0)
+                m.push_back ({ "Aus Favoriten entfernen", [&h = host, id = item.id] { h.forgetUsage (id); } });
+            return m;
+        }
+
+        juce::String getItemTooltip (const BrowserItem& item) override
+        {
+            const auto n = host.getUsageCount (item.id);
+            return n > 0 ? item.name + " – " + juce::String (n) + juce::String (u8"× benutzt") : juce::String();
+        }
 
     private:
-        juce::String id, title;
-        std::vector<BrowserItem> items;
+        void changeListenerCallback (juce::ChangeBroadcaster*) override
+        {
+            if (onItemsChanged)
+                onItemsChanged();
+        }
+
+        AppContext& ctx;
+        PluginHost& host;
+        bool instruments;
+        SortMode mode = byManufacturer;
     };
 
     //==========================================================================
@@ -324,18 +420,8 @@ namespace
         {
             auto& reg = ctx.registry;
 
-            reg.addBrowserSource (std::make_shared<StaticSource> ("instruments", "Instrumente", std::vector<BrowserItem> {
-                { "instrument", "builtin:testsynth", "SM Testsynth", placeholderCategory },
-                { "instrument", "builtin:sampler", "SM Sampler", placeholderCategory },
-                { "instrument", "builtin:drums", "SM Drums", placeholderCategory },
-            }));
-
-            reg.addBrowserSource (std::make_shared<StaticSource> ("effects", "Effekte", std::vector<BrowserItem> {
-                { "effect", "builtin:eq", "SM EQ", placeholderCategory },
-                { "effect", "builtin:compressor", "SM Kompressor", placeholderCategory },
-                { "effect", "builtin:reverb", "SM Reverb", placeholderCategory },
-                { "effect", "builtin:delay", "SM Delay", placeholderCategory },
-            }));
+            reg.addBrowserSource (std::make_shared<PluginSource> (ctx, true));
+            reg.addBrowserSource (std::make_shared<PluginSource> (ctx, false));
 
             fileSource = std::make_shared<FileSource>();
             reg.addBrowserSource (fileSource);
@@ -345,6 +431,8 @@ namespace
             reg.addDropHandler ({ "instrument", [] (AppContext& c, const BrowserItem& item, const DropTarget& target)
             {
                 auto* track = c.song.findTrack (target.trackId);
+
+                c.plugins.noteUsed (item.id);
 
                 if (track != nullptr && track->typeId == "instrument")
                 {
@@ -376,6 +464,7 @@ namespace
                 slot.id = c.song.newId();
                 slot.pluginId = item.id;
                 slot.name = item.name;
+                c.plugins.noteUsed (item.id);
                 c.selection.selectTrack (target.trackId);
                 return c.perform (std::make_unique<commands::AddInsert> (target.trackId, slot));
             } });

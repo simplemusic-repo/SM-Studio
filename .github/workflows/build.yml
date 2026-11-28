@@ -39,8 +39,20 @@ jobs:
             libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxcomposite-dev libxext-dev \
             libfreetype-dev libfontconfig1-dev libegl-dev libgl-dev fonts-dejavu-core
 
+      - name: ASIO SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Steinberg ASIO SDK, used under its GPLv3 license option
+          Invoke-WebRequest -Uri "https://www.steinberg.net/asiosdk" -OutFile asiosdk.zip -MaximumRedirection 10
+          Expand-Archive asiosdk.zip -DestinationPath asiosdk
+          $dir = (Get-ChildItem -Path asiosdk -Recurse -Filter iasiodrv.h | Select-Object -First 1).Directory.Parent.FullName
+          "ASIO_SDK_DIR=$($dir -replace '\\','/')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "ASIO SDK: $dir"
+
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSMS_ASIO_SDK_DIR="${{ env.ASIO_SDK_DIR }}" ${{ matrix.cmake_args }}
 
       - name: Build
         run: cmake --build build --config Release --parallel 4
@@ -55,6 +67,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "build/src/app/SMStudio_artefacts/Release/SM Studio.exe" dist/
+          # debug symbols: crash reports (crash.log) then show function names
+          Get-ChildItem -Recurse build/src/app -Filter "SM Studio.pdb" | Select-Object -First 1 | Copy-Item -Destination dist/
           Copy-Item LICENSE.md dist/
           Copy-Item README.md dist/
 

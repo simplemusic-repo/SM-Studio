@@ -9,11 +9,17 @@
 //   --show <panels>        comma separated: console,inspector,browser (for --screenshot)
 
 #include "SongHelpers.h"
+
+#include <chrono>
+#include <thread>
 #include "engine/EngineSync.h"
 #include "extension/ExtensionRegistry.h"
 #include "modules/Modules.h"
 #include "ui/MainComponent.h"
+#include "ui/PluginScanDialog.h"
+#include "ui/PluginWindows.h"
 #include "ui/Theme.h"
+#include "engine/CrashInfo.h"
 
 namespace sms
 {
@@ -22,8 +28,19 @@ namespace sms
 struct AppState final
 {
     /** @param persistentSettings  false for screenshots/tests: settings stay in memory */
-    explicit AppState (bool persistentSettings) : settings (chooseSettings (persistentSettings))
+    explicit AppState (bool persistentSettings)
+        : settings (chooseSettings (persistentSettings)),
+          plugins (persistentSettings ? dataFolder() : juce::File())
     {
+    }
+
+    static juce::File dataFolder()
+    {
+       #if JUCE_LINUX || JUCE_BSD
+        return juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile (".config/SM Studio");
+       #else
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("SM Studio");
+       #endif
     }
 
     ~AppState()
@@ -59,10 +76,12 @@ struct AppState final
     Selection selection;
     AudioEngine engine;
     AudioPool pool { song };
-    EngineSync engineSync { song, pool, engine };
+    PluginHost plugins;
+    EngineSync engineSync { song, pool, engine, &plugins };
+    PluginWindows pluginWindows { plugins }; // destroyed before the plug-ins
     ExtensionRegistry registry;
     EditState edit;
-    AppContext ctx { song, history, selection, engine, pool, registry, edit, settings };
+    AppContext ctx { song, history, selection, engine, pool, plugins, pluginWindows, registry, edit, settings, {} };
 };
 
 //==============================================================================
@@ -119,6 +138,16 @@ public:
 
     void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 
+    /** Recreates the UI (after a colour scheme change). Song, history and layout are kept. */
+    void rebuildContent()
+    {
+        if (auto* main = dynamic_cast<MainComponent*> (getContentComponent()))
+            main->saveLayout();
+        setBackgroundColour (theme::colours::window);
+        setContentOwned (new MainComponent (ctx), false);
+        getContentComponent()->grabKeyboardFocus();
+    }
+
 private:
     AppContext& ctx;
 
@@ -133,9 +162,104 @@ public:
     const juce::String getApplicationVersion() override { return SMS_VERSION_STRING; }
     bool moreThanOneInstanceAllowed() override { return true; }
 
+    /** German texts for JUCE's built-in dialogs (audio device settings). */
+    static void installTranslations()
+    {
+        auto* t = new juce::LocalisedStrings (juce::String::fromUTF8 (
+            "language: Deutsch\n"
+            "\"Audio device type:\" = \"Treiber:\"\n"
+            "\"Device:\" = \"Gerät:\"\n"
+            "\"Output:\" = \"Ausgang:\"\n"
+            "\"Input:\" = \"Eingang:\"\n"
+            "\"Sample rate:\" = \"Abtastrate:\"\n"
+            "\"Audio buffer size:\" = \"Puffergröße:\"\n"
+            "\"Active MIDI inputs:\" = \"MIDI-Eingänge:\"\n"
+            "\"MIDI Output:\" = \"MIDI-Ausgang:\"\n"
+            "\"Active input channels:\" = \"Aktive Eingänge:\"\n"
+            "\"Active output channels:\" = \"Aktive Ausgänge:\"\n"
+            "\"(no audio input channels found)\" = \"(keine Audio-Eingänge gefunden)\"\n"
+            "\"(no audio output channels found)\" = \"(keine Audio-Ausgänge gefunden)\"\n"
+            "\"No MIDI inputs available\" = \"Keine MIDI-Eingänge vorhanden\"\n"
+            "\"Control Panel\" = \"Treiber-Einstellungen\"\n"
+            "\"Opens the device's own control panel\" = \"Öffnet die Einstellungen des Soundkarten-Treibers (z. B. ASIO-Puffer)\"\n"
+            "\"Plays a test tone\" = \"Spielt einen Testton\"\n"
+            "\"Reset Device\" = \"Gerät zurücksetzen\"\n"
+            "\"Show advanced settings...\" = \"Erweiterte Einstellungen …\"\n"
+            "\"Error when trying to open audio device!\" = \"Das Audiogerät konnte nicht geöffnet werden!\"\n"
+            "\"Scan for bluetooth MIDI devices\" = \"Bluetooth-MIDI-Geräte suchen\"\n"
+            "\"none\" = \"keins\"\n"
+            "\"samples\" = \"Samples\"\n"
+            "\"Hide advanced settings\" = \"Erweiterte Einstellungen ausblenden\"\n"), false);
+        juce::LocalisedStrings::setCurrentMappings (t);
+    }
+
+    //==========================================================================
+    // crash reports: if SM Studio crashes, crash.log (stack trace + the last
+    // things that happened) is written to the settings folder; on the next
+    // start the user is told where it is so it can be sent to the developers.
+    static juce::File crashLogFile() { return AppState::dataFolder().getChildFile ("crash.log"); }
+    static juce::File crashFlagFile() { return AppState::dataFolder().getChildFile ("crash.new"); }
+
+    static void crashHandler (void*)
+    {
+        juce::String report;
+        report << "SM Studio crash report\n"
+               << "Time: " << juce::Time::getCurrentTime().toString (true, true, true, true) << "\n"
+               << "Version: " << juce::JUCEApplication::getInstance()->getApplicationVersion() << "\n"
+               << "OS: " << juce::SystemStats::getOperatingSystemName() << "\n\n"
+               << "Last steps:\n" << crashinfo::recent().joinIntoString ("\n") << "\n\n"
+               << "Stack:\n" << juce::SystemStats::getStackBacktrace() << "\n";
+        AppState::dataFolder().createDirectory();
+        crashLogFile().replaceWithText (report);
+        crashFlagFile().create();
+        std::_Exit (1);
+    }
+
+    static void installCrashHandler() { juce::SystemStats::setApplicationCrashHandler (crashHandler); }
+
+    void showCrashReportFromLastRun()
+    {
+        if (! crashFlagFile().existsAsFile())
+            return;
+        crashFlagFile().deleteFile();
+
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                          .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                          .withTitle (juce::String (u8"SM Studio wurde unerwartet beendet"))
+                                          .withMessage (juce::String (u8"Beim letzten Mal ist SM Studio abgestürzt. Ein Bericht liegt hier:\n\n")
+                                                        + crashLogFile().getFullPathName()
+                                                        + juce::String (u8"\n\nSchick diese Datei bitte an die Entwickler – sie zeigt, wo der Fehler passiert ist."))
+                                          .withButton (juce::String (u8"Ordner öffnen"), 1)
+                                          .withButton ("OK", 0),
+                                      [] (int result)
+                                      {
+                                          if (result == 1)
+                                              crashLogFile().revealToUser();
+                                      });
+    }
+
     void initialise (const juce::String& commandLine) override
     {
+        // plug-in scanner child process: check one plug-in and quit (no window)
+        {
+            const auto args = juce::StringArray::fromTokens (commandLine, true);
+            const auto i = args.indexOf ("--scan-plugin");
+            if (i >= 0 && i + 3 < args.size())
+            {
+                // safety net: never outlive the scan (e.g. if SM Studio itself was closed meanwhile)
+                std::thread ([] { std::this_thread::sleep_for (std::chrono::seconds (45)); std::_Exit (3); }).detach();
+
+                const auto ok = PluginHost::scanFileAndWriteResult (args[i + 1].unquoted(), args[i + 2].unquoted(),
+                                                                    juce::File (args[i + 3].unquoted()));
+                setApplicationReturnValue (ok ? 0 : 1);
+                quit();
+                return;
+            }
+        }
+
+        installTranslations();
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
+        installCrashHandler();
 
         const auto args = juce::StringArray::fromTokens (commandLine, true);
         auto argValue = [&args] (const juce::String& name)
@@ -150,6 +274,7 @@ public:
         for (auto& m : createBuiltInModules())
             state->registry.addModule (std::move (m));
         state->registry.initialiseModules (state->ctx);
+        lookAndFeel.refreshColours(); // colour scheme from the settings (applied by the settings module)
 
         if (args.contains ("--demo") || args.contains ("--screenshot"))
             createDemoSong (state->ctx);
@@ -161,10 +286,27 @@ public:
             return;
         }
 
-        if (auto error = state->engine.initialiseAudio(); error.isNotEmpty())
+        const auto savedDevice = state->settings.getXmlValue ("audio.deviceState");
+        if (auto error = state->engine.initialiseAudio (savedDevice.get()); error.isNotEmpty())
             juce::Logger::writeToLog ("Audio initialisation failed: " + error);
 
         mainWindow = std::make_unique<MainWindow> (state->ctx);
+
+        state->ctx.rebuildUi = [this]
+        {
+            lookAndFeel.refreshColours();
+            if (mainWindow != nullptr)
+                mainWindow->rebuildContent();
+        };
+
+        showCrashReportFromLastRun();
+
+        if (args.contains ("--crash-test")) // tests the crash report
+            juce::MessageManager::callAsync ([] { crashinfo::note ("crash test"); volatile int* p = nullptr; *p = 1; });
+
+        // first start: look for installed plug-ins in the background
+        if (! AppState::dataFolder().getChildFile ("plugins.xml").existsAsFile())
+            juce::MessageManager::callAsync ([this] { if (state != nullptr) startPluginScanWithProgress (state->ctx); });
     }
 
     void shutdown() override
@@ -173,6 +315,10 @@ public:
 
         if (state != nullptr)
         {
+            state->pluginWindows.closeAll();
+
+            if (auto xml = state->engine.createDeviceStateXml())
+                state->settings.setValue ("audio.deviceState", xml.get());
             state->engine.shutdownAudio();
             state->registry.shutdownModules();
         }

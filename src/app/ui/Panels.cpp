@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "Panels.h"
 
+#include "PluginWindows.h"
 #include "SongHelpers.h"
 #include "core/Commands.h"
+
+#include <map>
 #include "core/ValueFormat.h"
 #include "extension/ExtensionRegistry.h"
 
@@ -88,22 +91,39 @@ namespace
 } // namespace (shared helpers)
 
 //==============================================================================
-/** Insert slots of one channel: click a slot for bypass/remove, an empty slot
-    to add an effect; effects can also be dropped from the browser. */
+/** Insert slots of one channel. Each slot: power button (bypass), name
+    (click: menu, double click: open), open button. "+" adds an effect;
+    effects dropped from the browser on a slot replace it, below the last
+    slot they are appended. */
 class InsertsBox final : public juce::Component,
                          public juce::DragAndDropTarget,
-                         public juce::SettableTooltipClient
+                         public juce::TooltipClient
 {
 public:
-    InsertsBox (AppContext& c, ObjectId track, int slots = 3) : ctx (c), trackId (track), numSlots (slots)
-    {
-        setTooltip (u8"Inserts: Effekt hierher ziehen oder Klick auf + / auf einen Effekt");
-    }
+    InsertsBox (AppContext& c, ObjectId track, int slots = 3, int rowHeight = 18)
+        : ctx (c), trackId (track), numSlots (slots), slotHeight (rowHeight) {}
 
-    static constexpr int slotHeight = 16, titleHeight = 14;
+    static constexpr int titleHeight = 14;
     int preferredHeight() const { return titleHeight + numSlots * slotHeight + 2; }
 
     void setTrack (ObjectId id) { trackId = id; repaint(); }
+
+    juce::String getTooltip() override
+    {
+        const auto pos = getMouseXYRelative();
+        const auto index = slotAt (pos.y);
+        const auto* t = ctx.song.findTrack (trackId);
+        if (t == nullptr || index < 0)
+            return {};
+        if (index >= (int) t->inserts.size())
+            return u8"Effekt hinzufügen (oder aus dem Browser hierher ziehen)";
+        if (powerArea (index).contains (pos))
+            return u8"Ein/Aus (Bypass)";
+        if (openArea (index).contains (pos))
+            return u8"Effekt öffnen";
+        const auto err = ctx.plugins.getInstanceError (t->inserts[(size_t) index].id);
+        return err.isNotEmpty() ? err : juce::String (u8"Klick: Menü · Doppelklick: öffnen · Effekt darauf ziehen: ersetzen");
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -112,71 +132,134 @@ public:
         g.setFont (font (10.5f, true));
         g.drawText ("INSERTS", r.removeFromTop (titleHeight), juce::Justification::centredLeft);
 
-        g.setColour (dropHover ? colours::accent.withAlpha (0.25f) : colours::panelDark);
+        g.setColour (colours::panelDark);
         g.fillRoundedRectangle (r.toFloat(), 3.0f);
 
         const auto* t = ctx.song.findTrack (trackId);
         const auto count = t != nullptr ? (int) t->inserts.size() : 0;
+        const auto visible = std::min (count, numSlots);
 
         for (int i = 0; i < numSlots; ++i)
         {
-            auto slot = r.removeFromTop (slotHeight).reduced (2, 1);
-            g.setFont (font (11.0f));
+            auto slot = slotArea (i);
+            const bool hover = dropSlot == i;
 
-            if (i < count && (i < numSlots - 1 || count == numSlots))
+            if (i < visible)
             {
                 const auto& ins = t->inserts[(size_t) i];
-                g.setColour (ins.bypassed ? colours::panelLight : colours::header);
-                g.fillRoundedRectangle (slot.toFloat(), 2.0f);
-                g.setColour (ins.bypassed ? colours::textDim : colours::accent);
-                g.fillEllipse (slot.removeFromLeft (10).toFloat().withSizeKeepingCentre (5.0f, 5.0f));
-                g.setColour (ins.bypassed ? colours::textDim : colours::text);
-                g.drawText (ins.name, slot, juce::Justification::centredLeft, true);
-            }
-            else if (i == numSlots - 1 && count > numSlots)
-            {
+                const bool failed = ctx.plugins.getInstanceError (ins.id).isNotEmpty();
+
+                g.setColour (hover ? colours::accentDim : (ins.bypassed ? colours::panelLight : colours::header));
+                g.fillRoundedRectangle (slot.toFloat(), 2.5f);
+
+                // power button
+                auto power = powerArea (i).toFloat().reduced (2.0f);
+                const auto on = ! ins.bypassed;
+                juce::Path p;
+                const auto c = power.getCentre();
+                const auto rad = std::min (power.getWidth(), power.getHeight()) * 0.38f;
+                p.addCentredArc (c.x, c.y, rad, rad, 0.0f, 0.6f, juce::MathConstants<float>::twoPi - 0.6f, true);
+                g.setColour (on ? colours::accent : colours::textDim);
+                g.strokePath (p, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                g.drawLine (c.x, c.y - rad - 1.0f, c.x, c.y - 1.0f, 1.6f);
+
+                // open button
+                auto open = openArea (i).toFloat().reduced (3.0f);
+                auto icon = icons::detach();
                 g.setColour (colours::textDim);
-                g.drawText ("+" + juce::String (count - numSlots + 1) + " weitere", slot, juce::Justification::centred);
+                g.fillPath (icon, icon.getTransformToScaleToFit (open, true));
+
+                // name
+                auto nameArea = slot.withTrimmedLeft (powerArea (i).getWidth() + 2).withTrimmedRight (openArea (i).getWidth() + 2);
+                g.setColour (failed ? colours::record : (on ? colours::text : colours::textDim));
+                g.setFont (font (std::min (12.5f, (float) slotHeight * 0.62f)));
+                g.drawText (ins.name, nameArea, juce::Justification::centredLeft, true);
             }
-            else if (i == count)
+            else if (i == visible && count <= numSlots)
             {
-                g.setColour (colours::textDim.withAlpha (0.8f));
+                g.setColour (hover ? colours::accentDim : colours::textDim.withAlpha (0.8f));
+                if (hover)
+                    g.fillRoundedRectangle (slot.toFloat(), 2.5f);
+                g.setColour (colours::textDim);
                 g.drawText ("+", slot, juce::Justification::centred);
             }
+        }
+
+        if (count > numSlots)
+        {
+            g.setColour (colours::textDim);
+            g.setFont (font (10.5f));
+            g.drawText ("+" + juce::String (count - numSlots) + " weitere", getLocalBounds().removeFromTop (titleHeight),
+                        juce::Justification::centredRight);
+        }
+
+        if (dropSlot >= 0)
+        {
+            g.setColour (colours::accent);
+            g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 3.0f, 1.0f);
         }
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         ctx.selection.selectTrack (trackId);
-        const auto index = (e.y - titleHeight) / slotHeight;
+        const auto index = slotAt (e.y);
         const auto* t = ctx.song.findTrack (trackId);
         if (t == nullptr || index < 0)
             return;
 
-        if (index < (int) t->inserts.size() && index < numSlots)
+        if (index >= (int) t->inserts.size())
         {
-            const auto slot = t->inserts[(size_t) index];
-            juce::PopupMenu m;
-            m.addSectionHeader (slot.name);
-            m.addItem (1, "Bypass", true, slot.bypassed);
-            m.addItem (2, "Entfernen");
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                             [&c = ctx, track = trackId, slot] (int result)
-                             {
-                                 if (result == 1) c.perform (std::make_unique<commands::SetInsertBypass> (track, slot.id, ! slot.bypassed));
-                                 if (result == 2) c.perform (std::make_unique<commands::RemoveInsert> (track, slot.id));
-                             });
+            showAddMenu (-1);
+            return;
         }
-        else
+
+        const auto slot = t->inserts[(size_t) index];
+
+        if (powerArea (index).contains (e.getPosition()))
         {
-            showAddMenu();
+            ctx.perform (std::make_unique<commands::SetInsertBypass> (trackId, slot.id, ! slot.bypassed));
+            return;
         }
+
+        if (openArea (index).contains (e.getPosition()) || e.getNumberOfClicks() > 1)
+        {
+            openEditor (slot);
+            return;
+        }
+
+        juce::PopupMenu m;
+        m.addSectionHeader (slot.name);
+        const auto error = ctx.plugins.getInstanceError (slot.id);
+        if (error.isNotEmpty())
+            m.addItem (-1, error, false);
+        m.addItem (3, juce::String (u8"Öffnen …"), error.isEmpty());
+        m.addItem (1, "Ein (nicht umgangen)", true, ! slot.bypassed);
+        m.addItem (4, juce::String (u8"Ersetzen durch …"));
+        m.addSeparator();
+        m.addItem (2, "Entfernen");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                         [this, safe = juce::Component::SafePointer<InsertsBox> (this), track = trackId, slot] (int result)
+                         {
+                             if (safe == nullptr)
+                                 return;
+                             auto& c = ctx;
+                             if (result == 1) c.perform (std::make_unique<commands::SetInsertBypass> (track, slot.id, ! slot.bypassed));
+                             if (result == 2) { c.pluginWindows.close (slot.id); c.perform (std::make_unique<commands::RemoveInsert> (track, slot.id)); }
+                             if (result == 3) openEditor (slot);
+                             if (result == 4) showAddMenu (slotIndexOf (slot.id));
+                         });
     }
 
-    void showAddMenu()
+    void openEditor (const InsertSlot& slot)
     {
-        // offer the effects the browser knows
+        auto* t = ctx.song.findTrack (trackId);
+        ctx.pluginWindows.open (slot.id, slot.pluginId, slot.name + (t != nullptr ? juce::String (u8" – ") + t->name : juce::String()));
+    }
+
+    /** Menu of all effects; replaces slot `replaceIndex`, or appends if -1. */
+    void showAddMenu (int replaceIndex)
+    {
         std::vector<BrowserItem> effects;
         for (auto& src : ctx.registry.getBrowserSources())
             for (auto& item : src->getItems())
@@ -184,25 +267,44 @@ public:
                     effects.push_back (item);
 
         juce::PopupMenu m;
-        m.addSectionHeader (u8"Effekt hinzufügen");
+        m.addSectionHeader (replaceIndex >= 0 ? juce::String ("Effekt ersetzen") : juce::String (u8"Effekt hinzufügen"));
+        if (effects.empty())
+            m.addItem (-1, juce::String (u8"Keine Effekte gefunden – im Browser „Plug-ins suchen“"), false);
+
+        // grouped by manufacturer
+        std::map<juce::String, juce::PopupMenu> byMaker;
         for (size_t i = 0; i < effects.size(); ++i)
-            m.addItem ((int) i + 1, effects[i].name);
+            byMaker[effects[i].category].addItem ((int) i + 1, effects[i].name);
+        for (auto& [maker, sub] : byMaker)
+            m.addSubMenu (maker, sub);
 
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                         [&c = ctx, track = trackId, effects] (int result)
+                         [safe = juce::Component::SafePointer<InsertsBox> (this), effects, replaceIndex] (int result)
                          {
-                             if (result > 0 && result <= (int) effects.size())
-                                 addEffect (c, track, effects[(size_t) result - 1]);
+                             if (safe != nullptr && result > 0 && result <= (int) effects.size())
+                                 safe->insertEffect (effects[(size_t) result - 1], replaceIndex);
                          });
     }
 
-    static void addEffect (AppContext& c, ObjectId track, const BrowserItem& item)
+    void insertEffect (const BrowserItem& item, int replaceIndex)
     {
         InsertSlot slot;
-        slot.id = c.song.newId();
+        slot.id = ctx.song.newId();
         slot.pluginId = item.id;
         slot.name = item.name;
-        c.perform (std::make_unique<commands::AddInsert> (track, slot));
+        ctx.plugins.noteUsed (item.id);
+
+        const auto* t = ctx.song.findTrack (trackId);
+        if (t != nullptr && replaceIndex >= 0 && replaceIndex < (int) t->inserts.size())
+        {
+            const auto oldId = t->inserts[(size_t) replaceIndex].id;
+            ctx.pluginWindows.close (oldId);
+            ctx.perform (std::make_unique<commands::ReplaceInsert> (trackId, oldId, slot));
+        }
+        else
+        {
+            ctx.perform (std::make_unique<commands::AddInsert> (trackId, slot));
+        }
     }
 
     bool isInterestedInDragSource (const SourceDetails& d) override
@@ -211,22 +313,54 @@ public:
         return item && item->kind == "effect";
     }
 
-    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
-    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+    void itemDragEnter (const SourceDetails& d) override { itemDragMove (d); }
+    void itemDragMove (const SourceDetails& d) override
+    {
+        const auto i = std::max (0, slotAt (d.localPosition.y));
+        if (i != dropSlot)
+        {
+            dropSlot = i;
+            repaint();
+        }
+    }
+    void itemDragExit (const SourceDetails&) override { dropSlot = -1; repaint(); }
 
     void itemDropped (const SourceDetails& d) override
     {
-        dropHover = false;
+        const auto index = slotAt (d.localPosition.y);
+        dropSlot = -1;
         repaint();
         if (auto item = BrowserItem::fromDragDescription (d.description))
-            addEffect (ctx, trackId, *item);
+            insertEffect (*item, index); // on an existing slot: replace it
     }
 
 private:
+    juce::Rectangle<int> slotArea (int i) const
+    {
+        return getLocalBounds().withTrimmedTop (titleHeight).removeFromTop (slotHeight * (i + 1)).removeFromBottom (slotHeight).reduced (2, 1);
+    }
+    juce::Rectangle<int> powerArea (int i) const { auto s = slotArea (i); return s.removeFromLeft (s.getHeight() + 2); }
+    juce::Rectangle<int> openArea (int i) const  { auto s = slotArea (i); return s.removeFromRight (s.getHeight() + 2); }
+
+    int slotAt (int y) const
+    {
+        const auto i = (y - titleHeight) / slotHeight;
+        return y < titleHeight || i >= numSlots ? -1 : i;
+    }
+
+    int slotIndexOf (ObjectId id) const
+    {
+        if (auto* t = ctx.song.findTrack (trackId))
+            for (size_t i = 0; i < t->inserts.size(); ++i)
+                if (t->inserts[i].id == id)
+                    return (int) i;
+        return -1;
+    }
+
     AppContext& ctx;
     ObjectId trackId;
-    int numSlots;
-    bool dropHover = false;
+    int numSlots, slotHeight;
+    int dropSlot = -1;
 };
 
 /** Sends area: arrives together with buses (stage 5). */
@@ -250,8 +384,8 @@ static void drawSendsPlaceholder (juce::Graphics& g, juce::Rectangle<int> r)
 class ChannelStrip final : public juce::Component
 {
 public:
-    ChannelStrip (AppContext& c, ObjectId id, int insertSlots = 3, bool showNameBar = true)
-        : ctx (c), trackId (id), inserts (c, id, insertSlots), nameBar (showNameBar)
+    ChannelStrip (AppContext& c, ObjectId id, int insertSlots = 3, bool showNameBar = true, int insertRowHeight = 18)
+        : ctx (c), trackId (id), inserts (c, id, insertSlots, insertRowHeight), nameBar (showNameBar)
     {
         setupVolumeSlider (fader);
         fader.setSliderStyle (juce::Slider::LinearVertical);
@@ -410,8 +544,15 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
     }
     instrumentLabel.setColour (juce::Label::textColourId, colours::text);
 
-    openButton.setTooltip (u8"Instrument öffnen (Plug-in-Fenster, ab Etappe 3)");
-    openButton.setEnabled (false);
+    openButton.setTooltip (u8"Instrument-Fenster öffnen");
+    openButton.onClick = [this]
+    {
+        if (auto* t = ctx.song.findTrack (shownTrack))
+            if (! ctx.pluginWindows.open (t->id, t->instrumentPluginId, t->instrumentName + juce::String (u8" – ") + t->name))
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, t->instrumentName,
+                    ctx.plugins.getInstanceError (t->id).isNotEmpty() ? ctx.plugins.getInstanceError (t->id)
+                                                                     : juce::String (u8"Das Instrument wird noch geladen."));
+    };
 
     auto setupStepper = [this] (juce::Slider& s, double lo, double hi, Param p, const juce::String& tip)
     {
@@ -426,8 +567,8 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
         };
         s.onDragEnd = [this] { ctx.history.endGesture(); };
     };
-    setupStepper (transpose, -48, 48, Param::transpose, u8"Transponieren in Halbtönen (wirkt ab der MIDI-Wiedergabe)");
-    setupStepper (velocity, -127, 127, Param::velocityOffset, u8"Anschlagstärke anheben/absenken (wirkt ab der MIDI-Wiedergabe)");
+    setupStepper (transpose, -48, 48, Param::transpose, u8"Transponieren in Halbtönen");
+    setupStepper (velocity, -127, 127, Param::velocityOffset, u8"Anschlagstärke anheben/absenken");
 
     arpButton.setTooltip (u8"Arpeggiator (folgt)");
     arpButton.setEnabled (false);
@@ -448,7 +589,7 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
     emptyLabel.setJustificationType (juce::Justification::centred);
     emptyLabel.setColour (juce::Label::textColourId, colours::textDim);
 
-    strip = std::make_unique<ChannelStrip> (ctx, ObjectId {}, 6, false);
+    strip = std::make_unique<ChannelStrip> (ctx, ObjectId {}, 6, false, 24);
 
     for (auto* comp : std::initializer_list<juce::Component*> { &nameLabel, &typeLabel, strip.get() })
         addChildComponent (comp);
@@ -513,6 +654,7 @@ void InspectorPanel::refresh()
         typeLabel.setText ((type != nullptr ? type->displayName : t->typeId) + "spur", juce::dontSendNotification);
         instrumentLabel.setText (t->instrumentName.isNotEmpty() ? t->instrumentName : juce::String ("Kein Instrument"),
                                  juce::dontSendNotification);
+        openButton.setEnabled (t->instrumentPluginId.isNotEmpty());
 
         if (! transpose.isMouseButtonDown())
             transpose.setValue (t->transpose, juce::dontSendNotification);
@@ -608,11 +750,16 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
         b->onClick = [this, i] { selectTab ((int) i); };
         addAndMakeVisible (b);
 
+        if (sources[i]->getSortModes().size() > 0)
+            sources[i]->setSortMode (ctx.settings.getIntValue ("browser." + sources[i]->getId() + ".sort", 0));
+
         sources[i]->onItemsChanged = [safe = juce::Component::SafePointer<BrowserPanel> (this)]
         {
             juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->reload(); });
         };
     }
+
+    addChildComponent (sortTabs);
 
     search.setTextToShowWhenEmpty ("Suchen", colours::textDim);
     search.setTooltip ("Liste filtern");
@@ -627,7 +774,8 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
 
     status.setFont (font (11.5f));
     status.setColour (juce::Label::textColourId, colours::textDim);
-    status.setJustificationType (juce::Justification::topLeft);
+    status.setJustificationType (juce::Justification::centredLeft);
+    status.setMinimumHorizontalScale (0.7f);
     addAndMakeVisible (status);
 
     hint.setText (u8"Ziehen oder Doppelklick: ins Arrangement", juce::dontSendNotification);
@@ -636,7 +784,7 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
     hint.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (hint);
 
-    selectTab (0);
+    selectTab (juce::jlimit (0, juce::jmax (0, (int) sources.size() - 1), ctx.settings.getIntValue ("browser.tab", 0)));
 }
 
 BrowserPanel::~BrowserPanel()
@@ -648,6 +796,7 @@ BrowserPanel::~BrowserPanel()
 void BrowserPanel::selectTab (int index)
 {
     currentTab = index;
+    ctx.settings.setValue ("browser.tab", index);
     for (int i = 0; i < tabs.size(); ++i)
         tabs[i]->setToggleState (i == index, juce::dontSendNotification);
 
@@ -673,6 +822,41 @@ void BrowserPanel::selectTab (int index)
     for (auto* c : std::initializer_list<juce::Component*> { &search, &list, &hint, &status })
         c->setVisible (activeView == nullptr);
 
+    // sort / group selector ("Hersteller | Art | Favoriten") as tabs
+    sortTabs.onChange = nullptr;
+    sortTabs.clearTabs();
+    if (activeView == nullptr && index >= 0 && index < (int) sources.size())
+    {
+        auto source = sources[(size_t) index];
+        const auto modes = source->getSortModes();
+        for (int m = 0; m < modes.size(); ++m)
+        {
+            sortTabs.addTab (modes[m], colours::panel, -1);
+            if (auto* b = sortTabs.getTabButton (m))
+                b->setTooltip (modes[m] == "Favoriten" ? juce::String (u8"Die am häufigsten benutzten Plug-ins zuerst")
+                                                       : juce::String ("Nach ") + modes[m] + " gruppieren");
+        }
+        if (modes.size() > 0)
+            sortTabs.setCurrentTabIndex (juce::jlimit (0, modes.size() - 1,
+                                                       ctx.settings.getIntValue ("browser." + source->getId() + ".sort", 0)),
+                                         false);
+    }
+    sortTabs.setVisible (sortTabs.getNumTabs() > 0);
+    sortTabs.onChange = [this] (int m) { setSortMode (m); };
+
+    reload();
+}
+
+void BrowserPanel::setSortMode (int mode)
+{
+    auto& sources = ctx.registry.getBrowserSources();
+    if (currentTab < 0 || currentTab >= (int) sources.size())
+        return;
+
+    auto source = sources[(size_t) currentTab];
+    source->setSortMode (mode);
+    ctx.settings.setValue ("browser." + source->getId() + ".sort", mode);
+    list.deselectAllRows();
     reload();
 }
 
@@ -704,7 +888,8 @@ void BrowserPanel::reload()
         auto items = sources[(size_t) currentTab]->getItems();
         const auto filter = search.getText().trim();
 
-        std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.category.compareNatural (b.category) < 0; });
+        if (! sources[(size_t) currentTab]->keepsItemOrder())
+            std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.category.compareNatural (b.category) < 0; });
 
         juce::String lastCategory = "\x01";
         for (auto& item : items)
@@ -788,9 +973,48 @@ void BrowserPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
 
 juce::String BrowserPanel::getTooltipForRow (int row)
 {
-    if (row >= 0 && row < (int) rows.size() && rows[(size_t) row].item.kind == "audiofile")
-        return rows[(size_t) row].item.id;
+    if (row < 0 || row >= (int) rows.size() || rows[(size_t) row].isHeader)
+        return {};
+
+    auto& item = rows[(size_t) row].item;
+    if (item.kind == "audiofile")
+        return item.id;
+
+    auto& sources = ctx.registry.getBrowserSources();
+    if (currentTab >= 0 && currentTab < (int) sources.size())
+        return sources[(size_t) currentTab]->getItemTooltip (item);
     return {};
+}
+
+void BrowserPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu() || row < 0 || row >= (int) rows.size() || rows[(size_t) row].isHeader)
+        return;
+
+    auto& sources = ctx.registry.getBrowserSources();
+    if (currentTab < 0 || currentTab >= (int) sources.size())
+        return;
+
+    const auto item = rows[(size_t) row].item;
+    auto entries = sources[(size_t) currentTab]->getItemMenu (item);
+
+    juce::PopupMenu m;
+    m.addSectionHeader (item.name);
+    m.addItem (1000, u8"Einfügen (wie Doppelklick)");
+    if (! entries.empty())
+        m.addSeparator();
+    for (size_t i = 0; i < entries.size(); ++i)
+        m.addItem ((int) i + 1, entries[i].text);
+
+    // the actions may rebuild the list: run them after the menu has closed
+    m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
+                     [&c = ctx, item, entries] (int result)
+                     {
+                         if (result == 1000)
+                             activateBrowserItem (c, item);
+                         else if (result > 0 && result <= (int) entries.size() && entries[(size_t) result - 1].onClick)
+                             entries[(size_t) result - 1].onClick();
+                     });
 }
 
 void BrowserPanel::paint (juce::Graphics& g)
@@ -821,21 +1045,29 @@ void BrowserPanel::resized()
     search.setBounds (r.removeFromTop (26));
     r.removeFromTop (6);
 
-    if (! sourceButtons.isEmpty())
+    if (sortTabs.getNumTabs() > 0)
     {
-        auto row = r.removeFromTop (24);
-        for (auto* b : sourceButtons)
-        {
-            b->setBounds (row.removeFromLeft (juce::jmin (110, row.getWidth())));
-            row.removeFromLeft (4);
-        }
+        sortTabs.setBounds (r.removeFromTop (28));
         r.removeFromTop (4);
     }
 
-    if (status.getText().isNotEmpty())
-        status.setBounds (r.removeFromTop (30));
+    // buttons on the left, status text next to them
+    if (! sourceButtons.isEmpty() || status.getText().isNotEmpty())
+    {
+        auto row = r.removeFromTop (30);
+        for (auto* b : sourceButtons)
+        {
+            const auto w = b->getButtonText().length() <= 2 ? 28 : juce::jmin (110, row.getWidth());
+            b->setBounds (row.removeFromLeft (w).withSizeKeepingCentre (w, 24));
+            row.removeFromLeft (6);
+        }
+        status.setBounds (row);
+        r.removeFromTop (4);
+    }
     else
+    {
         status.setBounds ({});
+    }
 
     hint.setBounds (r.removeFromBottom (22));
     list.setBounds (r);
@@ -902,9 +1134,21 @@ public:
                                  .translated ((float) ch * ((float) meterArea.getWidth() / 2.0f + 1.0f), 0.0f);
             const auto db = juce::Decibels::gainToDecibels (levels[ch], -60.0f);
             const auto prop = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 66.0f);
-            auto fill = bar.withTop (bar.getBottom() - bar.getHeight() * prop);
-            g.setGradientFill (juce::ColourGradient (colours::play, 0, bar.getBottom(), colours::record, 0, bar.getY(), false));
-            g.fillRect (fill);
+            // flat segments: green up to -12 dB, yellow up to -3 dB, red above
+            auto yFor = [&] (float dB) { return bar.getBottom() - bar.getHeight() * juce::jlimit (0.0f, 1.0f, (dB + 60.0f) / 66.0f); };
+            const auto top = bar.getBottom() - bar.getHeight() * prop;
+            const std::tuple<float, float, juce::Colour> zones[] = {
+                { -60.0f, -12.0f, colours::play }, { -12.0f, -3.0f, colours::solo }, { -3.0f, 6.0f, colours::record }
+            };
+            for (auto& [from, to, colour] : zones)
+            {
+                const auto zoneTop = std::max (top, yFor (to)), zoneBottom = yFor (from);
+                if (zoneTop < zoneBottom)
+                {
+                    g.setColour (colour);
+                    g.fillRect (juce::Rectangle<float>::leftTopRightBottom (bar.getX(), zoneTop, bar.getRight(), zoneBottom));
+                }
+            }
         }
 
         g.setColour (colours::border);

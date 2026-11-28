@@ -9,32 +9,41 @@ namespace sms::theme
 // Dark, low-contrast studio look with a blue accent.
 namespace colours
 {
-    inline const juce::Colour window       { 0xff1b1c1f };
-    inline const juce::Colour panel        { 0xff2a2c31 };
-    inline const juce::Colour panelDark    { 0xff222428 };
-    inline const juce::Colour panelLight   { 0xff34373d };
-    inline const juce::Colour header       { 0xff3b3f46 };
-    inline const juce::Colour headerLight  { 0xff474b53 };
-    inline const juce::Colour border       { 0xff111214 };
-    inline const juce::Colour separator    { 0xff3f434a };
-    inline const juce::Colour laneA        { 0xff26282c };
-    inline const juce::Colour laneB        { 0xff232529 };
-    inline const juce::Colour laneSelected { 0xff2f3540 };
-    inline const juce::Colour gridBar      { 0xff3a3e45 };
-    inline const juce::Colour gridBeat     { 0xff2e3136 };
-    inline const juce::Colour text         { 0xffd9dce1 };
-    inline const juce::Colour textDim      { 0xff8d929b };
-    inline const juce::Colour textDark     { 0xff1a1b1e };
-    inline const juce::Colour accent       { 0xff3d9bff };
-    inline const juce::Colour accentDim    { 0xff2a5f99 };
-    inline const juce::Colour play         { 0xff4cc36a };
-    inline const juce::Colour record       { 0xffe5483f };
-    inline const juce::Colour mute         { 0xff3f86f2 }; // blue
-    inline const juce::Colour solo         { 0xfff5cf2e }; // yellow
-    inline const juce::Colour playhead     { 0xffe9eef5 };
-    inline const juce::Colour lcd          { 0xff111316 };
-    inline const juce::Colour lcdText      { 0xff9fd2ff };
+    inline juce::Colour window       { 0xff1b1c1f };
+    inline juce::Colour panel        { 0xff2a2c31 };
+    inline juce::Colour panelDark    { 0xff222428 };
+    inline juce::Colour panelLight   { 0xff34373d };
+    inline juce::Colour header       { 0xff3b3f46 };
+    inline juce::Colour headerLight  { 0xff474b53 };
+    inline juce::Colour border       { 0xff111214 };
+    inline juce::Colour separator    { 0xff3f434a };
+    inline juce::Colour laneA        { 0xff26282c };
+    inline juce::Colour laneB        { 0xff232529 };
+    inline juce::Colour laneSelected { 0xff2f3540 };
+    inline juce::Colour gridBar      { 0xff3a3e45 };
+    inline juce::Colour gridBeat     { 0xff2e3136 };
+    inline juce::Colour text         { 0xffd9dce1 };
+    inline juce::Colour textDim      { 0xff8d929b };
+    inline juce::Colour textDark     { 0xff1a1b1e };
+    inline juce::Colour accent       { 0xff3d9bff };
+    inline juce::Colour accentDim    { 0xff2a5f99 };
+    inline juce::Colour play         { 0xff4cc36a };
+    inline juce::Colour record       { 0xffe5483f };
+    inline juce::Colour mute         { 0xff3f86f2 }; // blue
+    inline juce::Colour solo         { 0xfff5cf2e }; // yellow
+    inline juce::Colour playhead     { 0xffe9eef5 };
+    inline juce::Colour lcd          { 0xff111316 };
+    inline juce::Colour lcdText      { 0xff9fd2ff };
 }
+
+/** Colour schemes (Einstellungen → Darstellung). Applying one changes the
+    colours above; the UI must be rebuilt afterwards to pick them up everywhere. */
+juce::StringArray schemeNames();
+void applyScheme (int index);
+
+/** A few colours of a scheme, for preview tiles in the settings. */
+struct SchemePreview { juce::Colour window, panel, header, accent, text; };
+SchemePreview schemePreview (int index);
 
 /** Colours offered for new tracks (cycled). */
 juce::Colour trackColour (int index);
@@ -74,6 +83,9 @@ class LookAndFeel final : public juce::LookAndFeel_V4
 public:
     LookAndFeel();
 
+    /** Re-reads the theme colours (after applyScheme). */
+    void refreshColours();
+
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour& background,
                                bool highlighted, bool down) override;
     void drawButtonText (juce::Graphics&, juce::TextButton&, bool highlighted, bool down) override;
@@ -89,6 +101,14 @@ public:
 
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos,
                            float startAngle, float endAngle, juce::Slider&) override;
+
+    int getTabButtonBestWidth (juce::TabBarButton&, int tabDepth) override;
+    void drawTabButton (juce::TabBarButton&, juce::Graphics&, bool isMouseOver, bool isMouseDown) override;
+    void drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics&) override;
+    void drawTabAreaBehindFrontButton (juce::TabbedButtonBar&, juce::Graphics&, int, int) override;
+
+    void drawProgressBar (juce::Graphics&, juce::ProgressBar&, int width, int height, double progress,
+                          const juce::String& text) override;
 
     void drawComboBox (juce::Graphics&, int w, int h, bool down, int bx, int by, int bw, int bh, juce::ComboBox&) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;

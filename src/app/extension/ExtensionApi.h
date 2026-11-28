@@ -22,6 +22,7 @@
 #include "core/Selection.h"
 #include "engine/AudioEngine.h"
 #include "engine/AudioPool.h"
+#include "engine/PluginHost.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -33,6 +34,7 @@ namespace sms
 {
 
 class ExtensionRegistry;
+class PluginWindows;
 
 /** Editing state shared by toolbar, arrangement and editors. Not undoable. */
 struct EditState
@@ -88,12 +90,18 @@ struct AppContext
     Selection& selection;
     AudioEngine& engine;
     AudioPool& pool;
+    PluginHost& plugins;
+    PluginWindows& pluginWindows;
     ExtensionRegistry& registry;
     EditState& edit;
 
     /** Persistent user settings (window positions, preferences ...).
         Saved automatically; keys are namespaced, e.g. "panel.console.visible". */
     juce::PropertySet& settings;
+
+    /** Rebuilds the main window content (e.g. after changing the colour scheme).
+        Set by the application; layout and song are kept. */
+    std::function<void()> rebuildUi;
 
     /** Shorthand: performs an undoable command. */
     bool perform (std::unique_ptr<Command> c, bool allowMerge = false) { return history.perform (std::move (c), allowMerge); }
@@ -169,6 +177,26 @@ public:
         std::function<void()> onClick;
     };
     virtual std::vector<Button> getButtons() { return {}; }
+
+    /** Optional ways to group/sort the list ("Hersteller", "Art", "Favoriten" ...),
+        shown as a selector above the list. The panel remembers the choice. */
+    virtual juce::StringArray getSortModes() { return {}; }
+    virtual void setSortMode (int) {}
+
+    /** True if getItems() already returns the final order (the panel then only
+        groups consecutive items by category instead of sorting them). */
+    virtual bool keepsItemOrder() { return false; }
+
+    /** Optional right-click menu for an item. */
+    struct MenuEntry
+    {
+        juce::String text;
+        std::function<void()> onClick;
+    };
+    virtual std::vector<MenuEntry> getItemMenu (const BrowserItem&) { return {}; }
+
+    /** Optional tooltip for an item. */
+    virtual juce::String getItemTooltip (const BrowserItem&) { return {}; }
 
     /** Optional own view instead of the standard list (e.g. a folder tree).
         Items in it should be draggable with BrowserItem::toDragDescription(). */

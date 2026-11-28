@@ -227,6 +227,23 @@ private:
     int requestedIndex;
 };
 
+/** Replaces an insert with another plug-in at the same position (new slot id). */
+class ReplaceInsert final : public Command
+{
+public:
+    ReplaceInsert (ObjectId track, ObjectId oldSlot, InsertSlot newSlot)
+        : trackId (track), oldSlotId (oldSlot), slot (std::move (newSlot)) {}
+
+    juce::String getName() const override { return "Effekt ersetzen"; }
+    bool perform (Song&) override;
+    void undo (Song&) override;
+
+private:
+    ObjectId trackId, oldSlotId;
+    InsertSlot slot;
+    std::optional<InsertSlot> old;
+};
+
 class SetInsertBypass final : public Command
 {
 public:

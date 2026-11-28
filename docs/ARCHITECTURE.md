@@ -64,6 +64,29 @@ aktualisieren sich selbst. `Selection` (nicht rückgängig machbar) meldet Auswa
 - `AudioEngine::renderBlock` ist die Echtzeit-Funktion; Tests rufen sie direkt offline auf
   (`tests/PlaybackTests.cpp`).
 
+### Plug-ins
+
+- **`PluginHost`** (engine): Liste der installierten Plug-ins (`KnownPluginList`, gespeichert in
+  `plugins.xml` im Einstellungsordner). Der Scan läuft in einem Hintergrund-Thread, der jede
+  Plug-in-Datei in einem **eigenen Kindprozess** prüft (`SM Studio --scan-plugin <Format> <Datei>
+  <Ergebnis.xml>`): Absturz oder > 30 s ohne Ergebnis → Datei kommt auf die Liste der
+  übersprungenen Plug-ins; Abbrechen beendet den Kindprozess sofort. Benutzungszähler für die
+  Browser-Favoriten liegen in `usage.xml` und Instanzen je **Besitzer** (Spur-ID für das Instrument, Slot-ID für
+  Inserts). Instanzen entstehen asynchron; bis sie bereit sind, fehlen sie im Snapshot. Da sie
+  je Besitzer zwischengespeichert bleiben, stellt Undo/Redo dieselbe Instanz mit ihren
+  Einstellungen wieder her.
+- Im Snapshot hält jede Spur `shared_ptr` auf Instrument und aktive Inserts; freigegeben wird
+  nur auf dem Message-Thread (Hazard-Pointer, s. o.).
+- Der Audio-Thread rendert je Spur: Audio-Clips → Instrument (MIDI aus dem Snapshot,
+  Transponieren/Anschlag bereits eingerechnet) → Inserts → Lautstärke/Pan. Blöcke werden auf
+  die vorbereitete Blockgröße begrenzt; `prepareToPlay` nur, wenn der Audio-Thread das Plug-in
+  nicht benutzt (`AudioEngine::isProcessorInUse`). Nach einem Gerätewechsel rendert der
+  Audio-Thread Snapshots mit alter Abtastrate/zu kleiner Blockgröße nicht (Stille);
+  `EngineSync` veröffentlicht erst einen Snapshot ohne Plug-ins, bereitet diese dann auf dem
+  Message-Thread neu vor und hängt sie wieder ein.
+- Eingebaute Instrumente (`builtin:…`, z. B. „SM Testsynth“) sind normale `AudioProcessor`.
+- **`PluginWindows`** (app) öffnet die Editoren; Fenster halten das Plug-in am Leben.
+
 ### UI-Regel: nichts löschen, was gerade ein Ereignis bearbeitet
 
 Wenn eine Komponente durch ihre eigene Aktion neu aufgebaut würde (z. B. Spurkopf
