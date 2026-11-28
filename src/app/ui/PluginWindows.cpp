@@ -81,7 +81,20 @@ private:
     std::shared_ptr<juce::AudioProcessor> processor; // keeps the plug-in alive while its editor is open
 };
 
-PluginWindows::PluginWindows (PluginHost& h) : host (h) {}
+PluginWindows::PluginWindows (PluginHost& h) : host (h)
+{
+    startTimer (250);
+}
+
+void PluginWindows::timerCallback()
+{
+    // plug-in windows float above the main window while SM Studio is active
+    // (but not above other applications)
+    const auto onTop = juce::Process::isForegroundProcess();
+    for (auto& [id, w] : windows)
+        if (w->isAlwaysOnTop() != onTop)
+            w->setAlwaysOnTop (onTop);
+}
 
 PluginWindows::~PluginWindows()
 {
@@ -93,6 +106,8 @@ bool PluginWindows::open (ObjectId owner, const juce::String& pluginId, const ju
     if (auto it = windows.find (owner); it != windows.end())
     {
         it->second->setMinimised (false);
+        it->second->setVisible (true);
+        it->second->setAlwaysOnTop (true);
         it->second->toFront (true);
         return true;
     }
@@ -111,6 +126,7 @@ bool PluginWindows::open (ObjectId owner, const juce::String& pluginId, const ju
         w->centreWithSize (w->getWidth(), w->getHeight());
 
     w->fitToScreen();
+    w->setAlwaysOnTop (true);
     w->setVisible (true);
     w->toFront (true);
 

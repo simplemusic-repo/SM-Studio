@@ -20,6 +20,10 @@ std::unique_ptr<RenderSnapshot> buildRenderSnapshot (const Song& song, const Aud
 {
     auto snap = std::make_unique<RenderSnapshot>();
     snap->sampleRate = sampleRate;
+    if (plugins != nullptr)
+        snap->maxBlock = plugins->getPlaybackBlockSize();
+    else
+        snap->maxBlock = 1 << 20; // no plug-ins: any block size is fine
 
     const auto& map = song.getTempoMap();
     const bool anySolo = std::any_of (song.getTracks().begin(), song.getTracks().end(), [] (auto& t) { return t.solo; });

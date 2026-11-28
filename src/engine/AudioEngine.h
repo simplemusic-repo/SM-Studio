@@ -115,7 +115,6 @@ private:
     void renderSegment (const RenderSnapshot&, float* left, float* right, std::int64_t start, int n,
                         bool isPlaying, bool sendNotesOff, int blockOffset) noexcept;
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
-    void prepareSnapshotProcessors (double sampleRate, int blockSize);
 
     juce::AudioDeviceManager deviceManager;
 

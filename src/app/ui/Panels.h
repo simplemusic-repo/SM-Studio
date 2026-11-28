@@ -63,8 +63,10 @@ private:
     juce::var getDragSourceDescription (const juce::SparseSet<int>&) override;
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
     juce::String getTooltipForRow (int row) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
 
     void selectTab (int index);
+    void setSortMode (int mode);
     void reload();
 
     struct Row
@@ -79,7 +81,7 @@ private:
     juce::TextEditor search;
     juce::ListBox list { "browser", this };
     juce::Label hint, status;
-    juce::OwnedArray<juce::TextButton> sourceButtons;
+    juce::OwnedArray<juce::TextButton> sourceButtons, sortButtons;
     std::map<int, std::unique_ptr<juce::Component>> customViews; // per tab, created on first use
     juce::Component* activeView = nullptr;
     int currentTab = 0;

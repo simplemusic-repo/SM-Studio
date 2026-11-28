@@ -19,11 +19,14 @@ namespace sms
 
 namespace
 {
-    /** Instruments or effects: built-in ones plus the scanned plug-ins, grouped by manufacturer. */
+    /** Instruments or effects: built-in ones plus the scanned plug-ins, grouped by
+        manufacturer, by type, or as favourites (most used first). */
     class PluginSource final : public BrowserSource,
                                private juce::ChangeListener
     {
     public:
+        enum SortMode { byManufacturer, byType, favourites };
+
         PluginSource (AppContext& c, bool instrumentsOnly) : ctx (c), host (c.plugins), instruments (instrumentsOnly)
         {
             host.addChangeListener (this);
@@ -34,22 +37,85 @@ namespace
         juce::String getId() const override { return instruments ? "instruments" : "effects"; }
         juce::String getTitle() const override { return instruments ? "Instrumente" : "Effekte"; }
 
+        juce::StringArray getSortModes() override { return { "Hersteller", "Art", "Favoriten" }; }
+        void setSortMode (int m) override { mode = (SortMode) juce::jlimit (0, 2, m); }
+        bool keepsItemOrder() override { return mode == favourites; }
+
         std::vector<BrowserItem> getItems() override
         {
             std::vector<BrowserItem> items;
+            std::vector<int> counts;
+
             for (auto& e : host.getEntries())
-                if (e.isInstrument == instruments)
+            {
+                if (e.isInstrument != instruments)
+                    continue;
+
+                const auto maker = e.manufacturer + (e.format.isNotEmpty() && e.format != "Eingebaut" ? " (" + e.format + ")" : juce::String());
+
+                if (mode == favourites)
+                {
+                    const auto n = host.getUsageCount (e.id);
+                    if (n <= 0)
+                        continue;
+                    items.push_back ({ instruments ? "instrument" : "effect", e.id, e.name, "Meistbenutzt" });
+                    counts.push_back (n);
+                }
+                else
+                {
                     items.push_back ({ instruments ? "instrument" : "effect", e.id, e.name,
-                                       e.manufacturer + (e.format.isNotEmpty() && e.format != "Eingebaut" ? " (" + e.format + ")" : juce::String()) });
+                                       mode == byType ? e.category : maker });
+                }
+            }
+
+            if (mode == favourites)
+            {
+                std::vector<size_t> order (items.size());
+                for (size_t i = 0; i < order.size(); ++i)
+                    order[i] = i;
+                std::stable_sort (order.begin(), order.end(), [&] (size_t a, size_t b)
+                {
+                    if (counts[a] != counts[b])
+                        return counts[a] > counts[b];
+                    return items[a].name.compareNatural (items[b].name) < 0;
+                });
+
+                std::vector<BrowserItem> sorted;
+                for (auto i : order)
+                    sorted.push_back (items[i]);
+                return sorted;
+            }
+
+            std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.name.compareNatural (b.name) < 0; });
             return items;
         }
 
-        juce::String getStatusText() override { return host.getStatusText(); }
+        juce::String getStatusText() override
+        {
+            if (mode == favourites && ! host.isScanning())
+                return getItems().empty() ? juce::String (u8"Noch keine Favoriten – benutzte Plug-ins erscheinen hier automatisch")
+                                          : juce::String (u8"Rechtsklick: aus Favoriten entfernen");
+            return host.getStatusText();
+        }
 
         std::vector<Button> getButtons() override
         {
             return { { juce::String (u8"↻"), u8"Plug-in-Liste aktualisieren (nach neuen Plug-ins suchen)",
                        [this] { startPluginScanWithProgress (ctx); } } };
+        }
+
+        std::vector<MenuEntry> getItemMenu (const BrowserItem& item) override
+        {
+            std::vector<MenuEntry> m;
+            if (host.getUsageCount (item.id) > 0)
+                m.push_back ({ "Aus Favoriten entfernen", [&h = host, id = item.id] { h.forgetUsage (id); } });
+            return m;
+        }
+
+        juce::String getItemTooltip (const BrowserItem& item) override
+        {
+            const auto n = host.getUsageCount (item.id);
+            return n > 0 ? item.name + " – " + juce::String (n) + juce::String (u8"× benutzt") : juce::String();
         }
 
     private:
@@ -62,6 +128,7 @@ namespace
         AppContext& ctx;
         PluginHost& host;
         bool instruments;
+        SortMode mode = byManufacturer;
     };
 
     //==========================================================================
@@ -365,6 +432,8 @@ namespace
             {
                 auto* track = c.song.findTrack (target.trackId);
 
+                c.plugins.noteUsed (item.id);
+
                 if (track != nullptr && track->typeId == "instrument")
                 {
                     c.selection.selectTrack (track->id);
@@ -395,6 +464,7 @@ namespace
                 slot.id = c.song.newId();
                 slot.pluginId = item.id;
                 slot.name = item.name;
+                c.plugins.noteUsed (item.id);
                 c.selection.selectTrack (target.trackId);
                 return c.perform (std::make_unique<commands::AddInsert> (target.trackId, slot));
             } });

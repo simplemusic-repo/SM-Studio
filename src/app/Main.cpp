@@ -9,6 +9,9 @@
 //   --show <panels>        comma separated: console,inspector,browser (for --screenshot)
 
 #include "SongHelpers.h"
+
+#include <chrono>
+#include <thread>
 #include "engine/EngineSync.h"
 #include "extension/ExtensionRegistry.h"
 #include "modules/Modules.h"
@@ -191,6 +194,23 @@ public:
 
     void initialise (const juce::String& commandLine) override
     {
+        // plug-in scanner child process: check one plug-in and quit (no window)
+        {
+            const auto args = juce::StringArray::fromTokens (commandLine, true);
+            const auto i = args.indexOf ("--scan-plugin");
+            if (i >= 0 && i + 3 < args.size())
+            {
+                // safety net: never outlive the scan (e.g. if SM Studio itself was closed meanwhile)
+                std::thread ([] { std::this_thread::sleep_for (std::chrono::seconds (45)); std::_Exit (3); }).detach();
+
+                const auto ok = PluginHost::scanFileAndWriteResult (args[i + 1].unquoted(), args[i + 2].unquoted(),
+                                                                    juce::File (args[i + 3].unquoted()));
+                setApplicationReturnValue (ok ? 0 : 1);
+                quit();
+                return;
+            }
+        }
+
         installTranslations();
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 

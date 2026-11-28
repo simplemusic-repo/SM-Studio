@@ -28,6 +28,81 @@ void PluginHost::loadList()
 
     if (auto xml = juce::parseXML (dataFolder.getChildFile ("plugins.xml")))
         known.recreateFromXml (*xml);
+
+    if (auto xml = juce::parseXML (dataFolder.getChildFile ("usage.xml")))
+        for (auto* e : xml->getChildWithTagNameIterator ("PLUGIN"))
+            if (const auto n = e->getIntAttribute ("count"); n > 0)
+                usage[e->getStringAttribute ("id")] = n;
+}
+
+void PluginHost::saveUsage() const
+{
+    if (dataFolder == juce::File())
+        return;
+
+    juce::XmlElement xml ("USAGE");
+    for (auto& [id, n] : usage)
+    {
+        auto* e = xml.createNewChildElement ("PLUGIN");
+        e->setAttribute ("id", id);
+        e->setAttribute ("count", n);
+    }
+    dataFolder.createDirectory();
+    xml.writeTo (dataFolder.getChildFile ("usage.xml"));
+}
+
+void PluginHost::noteUsed (const juce::String& pluginId)
+{
+    if (pluginId.isEmpty())
+        return;
+    ++usage[pluginId];
+    saveUsage();
+    sendChangeMessage();
+}
+
+int PluginHost::getUsageCount (const juce::String& pluginId) const
+{
+    const auto it = usage.find (pluginId);
+    return it != usage.end() ? it->second : 0;
+}
+
+void PluginHost::forgetUsage (const juce::String& pluginId)
+{
+    if (usage.erase (pluginId) > 0)
+    {
+        saveUsage();
+        sendChangeMessage();
+    }
+}
+
+juce::String PluginHost::describeCategory (const juce::String& rawCategory, bool isInstrument)
+{
+    static const std::pair<const char*, const char*> names[] = {
+        { "reverb", "Hall" },           { "delay", "Delay" },           { "eq", "EQ" },
+        { "dynamics", "Dynamik" },      { "compressor", "Dynamik" },    { "limiter", "Dynamik" },
+        { "distortion", "Verzerrung" }, { "modulation", "Modulation" }, { "filter", "Filter" },
+        { "pitch", "Tonh\xc3\xb6he" },         { "analyzer", "Analyse" },      { "spatial", "Raum" },
+        { "surround", "Raum" },         { "restoration", "Restauration" }, { "mastering", "Mastering" },
+        { "tools", "Werkzeuge" },       { "generator", "Generator" },   { "network", "Netzwerk" },
+        { "synth", "Synthesizer" },     { "sampler", "Sampler" },       { "drum", "Drums" },
+        { "piano", "Piano" },           { "external", "Extern" },
+    };
+
+    for (auto part : juce::StringArray::fromTokens (rawCategory, "|", {}))
+    {
+        part = part.trim().toLowerCase();
+        if (part.isEmpty() || part == "fx" || part == "instrument" || part == "stereo" || part == "mono"
+            || part == "effect" || part == "up-downmix" || part == "ambisonics")
+            continue;
+
+        for (auto& [key, name] : names)
+            if (part.contains (key))
+                return juce::String (juce::CharPointer_UTF8 (name));
+
+        return part.substring (0, 1).toUpperCase() + part.substring (1);
+    }
+
+    return isInstrument ? juce::String ("Instrument") : juce::String ("Sonstige");
 }
 
 void PluginHost::saveList()
@@ -70,42 +145,120 @@ juce::String PluginHost::getScanningName() const
     return scanningName;
 }
 
+namespace
+{
+    constexpr int scanTimeoutMs = 30000; // a plug-in that takes longer is skipped
+}
+
+bool PluginHost::scanFileInChildProcess (const juce::File& executable, juce::AudioPluginFormat& format,
+                                         const juce::String& file)
+{
+    const auto result = juce::File::createTempFile (".xml");
+
+    juce::ChildProcess child;
+    const juce::StringArray command { executable.getFullPathName(), "--scan-plugin", format.getName(), file,
+                                      result.getFullPathName() };
+
+    if (! child.start (command, 0))
+    {
+        result.deleteFile();
+        return false;
+    }
+
+    const auto start = juce::Time::getMillisecondCounter();
+    bool timedOut = false;
+
+    while (child.isRunning())
+    {
+        if (threadShouldExit())
+        {
+            child.kill(); // "Abbrechen": stop immediately, don't judge this plug-in
+            result.deleteFile();
+            return true;
+        }
+
+        if (juce::Time::getMillisecondCounter() - start > (juce::uint32) scanTimeoutMs)
+        {
+            timedOut = true;
+            child.kill();
+            break;
+        }
+
+        wait (40);
+    }
+
+    // a result written before the process hung on exit still counts
+    int found = 0;
+    if (auto xml = juce::parseXML (result))
+    {
+        for (auto* e : xml->getChildIterator())
+        {
+            juce::PluginDescription d;
+            if (d.loadFromXml (*e))
+            {
+                known.addType (d);
+                ++found;
+            }
+        }
+    }
+    result.deleteFile();
+
+    if (found == 0)
+    {
+        known.addToBlacklist (file); // crashed, hung (timedOut) or contains nothing usable
+        juce::ignoreUnused (timedOut);
+    }
+
+    return true;
+}
+
 void PluginHost::run()
 {
     scanProgress = 0.0f;
     const auto testDelayMs = juce::SystemStats::getEnvironmentVariable ("SMS_TEST_SCAN_DELAY_MS", "0").getIntValue();
-    if (dataFolder != juce::File())
-        dataFolder.createDirectory();
+    const auto executable = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
 
-    const auto pedal = dataFolder != juce::File() ? dataFolder.getChildFile ("scanning.txt") : juce::File();
+    // 1) collect plug-in files of all formats that are new or changed
+    struct Job { juce::AudioPluginFormat* format; juce::String file; };
+    std::vector<Job> jobs;
 
-    const auto formatList = formats.getFormats();
-    const auto numFormats = std::max (1, (int) formatList.size());
-
-    for (int fi = 0; fi < (int) formatList.size(); ++fi)
+    for (auto* format : formats.getFormats())
     {
         if (threadShouldExit())
             break;
 
-        auto* format = formatList[fi];
-        juce::PluginDirectoryScanner scanner (known, *format, format->getDefaultLocationsToSearch(), true, pedal, false);
-        juce::String name;
-
-        for (;;)
         {
-            {
-                const juce::ScopedLock sl (statusLock);
-                scanningName = scanner.getNextPluginFileThatWillBeScanned();
-            }
-            scanProgress = ((float) fi + juce::jlimit (0.0f, 1.0f, scanner.getProgress())) / (float) numFormats;
-            triggerAsyncUpdate();
-
-            if (threadShouldExit() || ! scanner.scanNextFile (true, name))
-                break;
-
-            if (testDelayMs > 0) // only for UI tests (SMS_TEST_SCAN_DELAY_MS)
-                wait (testDelayMs);
+            const juce::ScopedLock sl (statusLock);
+            scanningName = juce::String (u8"Suche Dateien (") + format->getName() + ") …";
         }
+        triggerAsyncUpdate();
+
+        for (auto& file : format->searchPathsForPlugins (format->getDefaultLocationsToSearch(), true, false))
+            if (! known.getBlacklistedFiles().contains (file) && ! known.isListingUpToDate (file, *format))
+                jobs.push_back ({ format, file });
+    }
+
+    // 2) check each one in its own process (a crash or hang cannot take SM Studio down)
+    for (size_t i = 0; i < jobs.size() && ! threadShouldExit(); ++i)
+    {
+        {
+            const juce::ScopedLock sl (statusLock);
+            scanningName = jobs[i].file;
+        }
+        scanProgress = (float) i / (float) jobs.size();
+        triggerAsyncUpdate();
+
+        if (! scanFileInChildProcess (executable, *jobs[i].format, jobs[i].file))
+        {
+            // could not start a child process: fall back to scanning here
+            juce::OwnedArray<juce::PluginDescription> found;
+            jobs[i].format->findAllTypesForFile (found, jobs[i].file);
+            for (auto* d : found)
+                known.addType (*d);
+        }
+
+        if (testDelayMs > 0) // only for UI tests (SMS_TEST_SCAN_DELAY_MS)
+            wait (testDelayMs);
     }
 
     scanProgress = 1.0f;
@@ -119,16 +272,39 @@ void PluginHost::run()
     triggerAsyncUpdate();
 }
 
+bool PluginHost::scanFileAndWriteResult (const juce::String& formatName, const juce::String& file, const juce::File& resultFile)
+{
+    juce::AudioPluginFormatManager fm;
+    juce::addDefaultFormatsToManager (fm);
+
+    for (auto* format : fm.getFormats())
+    {
+        if (format->getName() != formatName)
+            continue;
+
+        juce::OwnedArray<juce::PluginDescription> found;
+        format->findAllTypesForFile (found, file);
+
+        juce::XmlElement root ("PLUGINS");
+        for (auto* d : found)
+            root.addChildElement (d->createXml().release());
+
+        return root.writeTo (resultFile);
+    }
+    return false;
+}
+
 std::vector<PluginHost::Entry> PluginHost::getEntries() const
 {
     std::vector<Entry> out;
 
     for (auto& b : builtin::list())
-        out.push_back ({ b.id, b.name, "SM Studio", "Eingebaut", b.isInstrument });
+        out.push_back ({ b.id, b.name, "SM Studio", "Eingebaut", b.isInstrument,
+                         describeCategory (b.isInstrument ? "Instrument|Synth" : "Fx", b.isInstrument) });
 
     for (auto& d : known.getTypes())
         out.push_back ({ d.createIdentifierString(), d.name, d.manufacturerName.isNotEmpty() ? d.manufacturerName : juce::String ("Unbekannt"),
-                         d.pluginFormatName, d.isInstrument });
+                         d.pluginFormatName, d.isInstrument, describeCategory (d.category, d.isInstrument) });
 
     return out;
 }

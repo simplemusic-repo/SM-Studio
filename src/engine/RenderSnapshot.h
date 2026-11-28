@@ -42,6 +42,7 @@ struct RenderSnapshot
     };
 
     double sampleRate = 44100.0;
+    int maxBlock = 512; // block size the plug-ins were prepared for
     std::vector<Track> tracks;
 };
 

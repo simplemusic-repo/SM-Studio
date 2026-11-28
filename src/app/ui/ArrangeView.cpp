@@ -27,7 +27,7 @@ namespace
 }
 
 //==============================================================================
-/** Flat button in the track header showing the instrument; click opens its window. */
+/** Small button in the track header with the instrument symbol: opens the plug-in. */
 class InstrumentButton final : public juce::Button
 {
 public:
@@ -35,19 +35,15 @@ public:
 
     void paintButton (juce::Graphics& g, bool highlighted, bool down) override
     {
-        auto r = getLocalBounds().toFloat();
-        if (highlighted || down)
-        {
-            g.setColour (colours::headerLight.withAlpha (down ? 0.7f : 0.45f));
-            g.fillRoundedRectangle (r, 3.0f);
-        }
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (down ? colours::accentDim : (highlighted ? colours::headerLight : colours::header));
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (highlighted ? colours::accent : colours::separator);
+        g.drawRoundedRectangle (r, 3.0f, 1.0f);
 
         auto icon = icons::instrument();
-        g.setColour (highlighted ? colours::accent : colours::textDim);
-        g.fillPath (icon, icon.getTransformToScaleToFit (r.removeFromLeft (20.0f).reduced (2.0f, 1.0f), true));
-        g.setColour (highlighted ? colours::text : colours::textDim);
-        g.setFont (font (12.0f));
-        g.drawText (getButtonText(), r.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
+        g.setColour (isEnabled() ? (highlighted ? colours::text : colours::textDim) : colours::textDim.withAlpha (0.4f));
+        g.fillPath (icon, icon.getTransformToScaleToFit (r.reduced (5.0f, 4.0f), true));
     }
 };
 
@@ -104,8 +100,9 @@ public:
             isInstrument = t->typeId == "instrument";
             subtitle = isInstrument ? (t->instrumentName.isNotEmpty() ? t->instrumentName : juce::String ("Kein Instrument"))
                                     : juce::String ("Audio");
-            instrumentButton.setButtonText (subtitle);
             instrumentButton.setVisible (isInstrument);
+            instrumentButton.setTooltip (t->instrumentName.isNotEmpty() ? juce::String (u8"Instrument öffnen: ") + t->instrumentName
+                                                                        : juce::String ("Kein Instrument geladen"));
             instrumentButton.setEnabled (t->instrumentPluginId.isNotEmpty());
         }
         repaint();
@@ -154,7 +151,7 @@ public:
     void resized() override
     {
         name.setBounds (26, 6, getWidth() - 110, 22);
-        instrumentButton.setBounds (27, 32, getWidth() - 40, 20);
+        instrumentButton.setBounds (28, 33, 30, 22);
         auto buttons = juce::Rectangle<int> (getWidth() - 82, 8, 72, 18);
         muteButton.setBounds (buttons.removeFromLeft (22));
         buttons.removeFromLeft (3);

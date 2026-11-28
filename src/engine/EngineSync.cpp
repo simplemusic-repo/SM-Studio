@@ -33,12 +33,12 @@ void EngineSync::update()
 
     auto snap = buildRenderSnapshot (song, pool, builtForRate, plugins);
 
-    // plug-ins that were prepared for another rate/size and are not playing right now
-    auto check = [this] (const std::shared_ptr<juce::AudioProcessor>& p)
+    // plug-ins prepared for another rate / block size (e.g. after changing the sound card)
+    std::vector<juce::AudioProcessor*> needPrepare;
+    auto check = [&] (const std::shared_ptr<juce::AudioProcessor>& p)
     {
-        if (p != nullptr && (! juce::approximatelyEqual (p->getSampleRate(), builtForRate) || p->getBlockSize() != builtForBlock)
-            && ! engine.isProcessorInUse (p.get()))
-            PluginHost::prepare (*p, builtForRate, builtForBlock);
+        if (p != nullptr && (! juce::approximatelyEqual (p->getSampleRate(), builtForRate) || p->getBlockSize() != builtForBlock))
+            needPrepare.push_back (p.get());
     };
     for (auto& t : snap->tracks)
     {
@@ -46,6 +46,18 @@ void EngineSync::update()
         for (auto& i : t.inserts)
             check (i);
     }
+
+    if (std::any_of (needPrepare.begin(), needPrepare.end(), [this] (auto* p) { return engine.isProcessorInUse (p); }))
+    {
+        // the audio thread may still hold them: first publish a snapshot without
+        // plug-ins (audio clips keep playing), prepare on one of the next ticks
+        engine.publish (buildRenderSnapshot (song, pool, builtForRate, nullptr));
+        dirty = true;
+        return;
+    }
+
+    for (auto* p : needPrepare)
+        PluginHost::prepare (*p, builtForRate, builtForBlock);
 
     engine.publish (std::move (snap));
     dirty = false;

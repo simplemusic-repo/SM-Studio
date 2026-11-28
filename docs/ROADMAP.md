@@ -30,17 +30,18 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 ## ✅ Etappe 3 – Plug-ins
 - [x] VST3-Hosting (Windows/macOS), Audio Units (macOS)
 - [x] Plug-in-Suche im Hintergrund, automatisch beim ersten Start, Absturzschutz (abstürzende Plug-ins werden übersprungen), gespeicherte Liste
-- [x] Browser zeigt Instrumente/Effekte nach Hersteller, Knopf „Plug-ins suchen“
+- [x] Browser zeigt Instrumente/Effekte nach Hersteller, Art oder als Favoriten (nach Benutzung, Rechtsklick entfernt), Knopf ↻
 - [x] Instrumentenspuren spielen MIDI → Instrument (inkl. Transponieren/Anschlag), Note-Offs bei Stopp/Sprung/Loop
 - [x] Insert-Ketten mit Bypass, Plug-ins laufen auch im Stopp weiter (Hall-Fahnen)
 - [x] Plug-in-Fenster: „Öffnen“ im Inspector, Doppelklick / Menü auf einen Insert
 - [x] Eingebauter „SM Testsynth“ (funktioniert ohne Plug-ins, für Tests)
-- [x] Plug-in-Suche mit Fortschrittsfenster (DAW gesperrt, Abbrechen möglich)
-- [x] Plug-in-Fenster nie im Vollbild, zu große Editoren mit Bildlaufleisten; Instrument-Knopf im Spurkopf
+- [x] Plug-in-Suche mit Fortschrittsfenster (DAW gesperrt, Abbrechen möglich), jedes Plug-in wird in eigenem Prozess geprüft (hängt es > 30 s oder stürzt es ab → übersprungen)
+- [x] Plug-in-Fenster nie im Vollbild, zu große Editoren mit Bildlaufleisten; Plug-in-Fenster bleiben vor dem Hauptfenster; Instrument-Symbolknopf im Spurkopf
 - [x] Inserts: Power-Knopf (Bypass), Öffnen-Knopf, Effekt auf belegten Platz ziehen = ersetzen
 - [x] Live-MIDI: Keyboards und Bildschirm-Klaviatur (F7) spielen die ausgewählte Instrumentenspur
-- [x] Menü „Einstellungen“: Audio & MIDI (Soundkarte, Treiber inkl. ASIO, Abtastrate, Puffer, MIDI-Eingänge), Plug-ins, Farbschemata
-- [ ] später: Plug-in-Suche in eigenem Prozess, Latenzausgleich (PDC), Plug-in-Zustand im Projekt speichern (mit Etappe 8),
+- [x] Menü „Einstellungen“: Audio (Soundkarte, Treiber inkl. ASIO, Abtastrate, Puffer), MIDI (Eingänge an/aus, Aktivitätsanzeige), Plug-ins, Farbschemata
+- [x] Soundkarten-Wechsel ohne Absturz/Knacksen (Plug-ins werden außerhalb des Audio-Threads neu vorbereitet)
+- [ ] später: Latenzausgleich (PDC), Plug-in-Zustand im Projekt speichern (mit Etappe 8),
       Plug-in-Parameter-Automation (Etappe 6), Inserts per Drag & Drop umsortieren
 
 ## Etappe 4 – Piano Roll

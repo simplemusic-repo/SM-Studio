@@ -12,7 +12,7 @@ namespace sms
 
 /** Opens and tracks the editor windows of plug-ins (one per owner: track
     instrument or insert slot). Window positions are kept while the app runs. */
-class PluginWindows
+class PluginWindows : private juce::Timer
 {
 public:
     explicit PluginWindows (PluginHost&);
@@ -27,6 +27,7 @@ public:
     bool isOpen (ObjectId owner) const { return windows.count (owner) > 0; }
 
 private:
+    void timerCallback() override;
     class Window;
 
     PluginHost& host;

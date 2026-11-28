@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The "Einstellungen" menu and window: audio & MIDI devices (sound card,
-// driver incl. ASIO on Windows, sample rate, buffer size, MIDI inputs),
+// driver incl. ASIO on Windows, sample rate, buffer size), MIDI inputs,
 // plug-ins (scan, skipped plug-ins) and appearance (colour schemes).
 
 #include "Modules.h"
@@ -21,6 +21,7 @@ namespace
         l.setFont (theme::font (bold ? 14.0f : 12.5f, bold));
         l.setColour (juce::Label::textColourId, bold ? theme::colours::text : theme::colours::textDim);
         l.setJustificationType (juce::Justification::topLeft);
+        l.setMinimumHorizontalScale (1.0f); // wrap long texts instead of squeezing them
         return l;
     }
 
@@ -29,11 +30,11 @@ namespace
     {
     public:
         explicit AudioPage (AppContext& c)
-            : ctx (c), selector (c.engine.getDeviceManager(), 0, 2, 2, 2, true, false, true, false)
+            : ctx (c), selector (c.engine.getDeviceManager(), 0, 2, 2, 2, false, false, true, false)
         {
             styleCaption (hint).setText (u8"Treiber: unter Windows möglichst ASIO wählen (niedrigste Latenz). "
                                          u8"Kleinere Puffergröße = weniger Verzögerung, aber mehr CPU-Last. "
-                                         u8"MIDI-Eingänge: aktivierte Keyboards spielen die ausgewählte Instrumentenspur.",
+                                         u8"Keyboards und andere MIDI-Geräte wählst du im Reiter „MIDI“.",
                                          juce::dontSendNotification);
             addAndMakeVisible (hint);
             addAndMakeVisible (selector);
@@ -56,6 +57,115 @@ namespace
         AppContext& ctx;
         juce::AudioDeviceSelectorComponent selector;
         juce::Label hint;
+    };
+
+    //==========================================================================
+    /** Lists the MIDI inputs available on this computer; each one can be switched
+        on or off. Refreshes itself when devices are plugged in or removed. */
+    class MidiPage final : public juce::Component,
+                           private juce::Timer
+    {
+    public:
+        explicit MidiPage (AppContext& c) : ctx (c)
+        {
+            styleCaption (title, true).setText (u8"MIDI-Eingänge (Keyboards, Controller)", juce::dontSendNotification);
+            styleCaption (info).setText (u8"Aktivierte Geräte spielen die ausgewählte Instrumentenspur – klicke dazu im "
+                                         u8"Arrangement auf eine Spur mit Instrument. Neu angeschlossene Geräte erscheinen "
+                                         u8"automatisch in der Liste.", juce::dontSendNotification);
+            styleCaption (activity);
+            styleCaption (empty).setText (u8"Keine MIDI-Geräte gefunden. Ist das Keyboard angeschlossen und eingeschaltet?",
+                                          juce::dontSendNotification);
+            for (auto* comp : std::initializer_list<juce::Component*> { &title, &info, &activity, &empty })
+                addAndMakeVisible (comp);
+
+            rebuild();
+            lastCount = ctx.engine.getLiveMidiCount();
+            startTimer (100);
+        }
+
+        ~MidiPage() override
+        {
+            if (auto xml = ctx.engine.createDeviceStateXml())
+                ctx.settings.setValue ("audio.deviceState", xml.get());
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (14);
+            title.setBounds (r.removeFromTop (24));
+            info.setBounds (r.removeFromTop (48));
+            r.removeFromTop (6);
+            if (empty.isVisible())
+                empty.setBounds (r.removeFromTop (28));
+            for (auto& t : toggles)
+                t->setBounds (r.removeFromTop (28).removeFromLeft (460));
+            r.removeFromTop (12);
+            activity.setBounds (r.removeFromTop (24));
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            // flat activity lamp left of the activity text
+            const auto lamp = activity.getBounds().removeFromLeft (14).removeFromTop (16).withSizeKeepingCentre (10, 10).toFloat();
+            g.setColour (blink > 0 ? theme::colours::accent : theme::colours::panelDark);
+            g.fillEllipse (lamp);
+            g.setColour (theme::colours::separator);
+            g.drawEllipse (lamp, 1.0f);
+        }
+
+    private:
+        void rebuild()
+        {
+            devices = juce::MidiInput::getAvailableDevices();
+            toggles.clear();
+            auto& dm = ctx.engine.getDeviceManager();
+
+            for (const auto& d : devices)
+            {
+                auto t = std::make_unique<juce::ToggleButton> (d.name);
+                t->setToggleState (dm.isMidiInputDeviceEnabled (d.identifier), juce::dontSendNotification);
+                t->setTooltip (u8"Gerät als MIDI-Eingang verwenden");
+                t->onClick = [this, id = d.identifier, b = t.get()]
+                {
+                    ctx.engine.getDeviceManager().setMidiInputDeviceEnabled (id, b->getToggleState());
+                    if (auto xml = ctx.engine.createDeviceStateXml())
+                        ctx.settings.setValue ("audio.deviceState", xml.get());
+                };
+                addAndMakeVisible (*t);
+                toggles.push_back (std::move (t));
+            }
+
+            empty.setVisible (devices.isEmpty());
+            resized();
+        }
+
+        void timerCallback() override
+        {
+            if (++pollCounter % 10 == 0 && juce::MidiInput::getAvailableDevices() != devices)
+                rebuild();
+
+            const auto count = ctx.engine.getLiveMidiCount();
+            if (count != lastCount)
+            {
+                lastCount = count;
+                blink = 3;
+            }
+            else if (blink > 0)
+            {
+                --blink;
+            }
+
+            activity.setText (juce::String ("      ") + (blink > 0 ? juce::String (u8"MIDI-Daten kommen an")
+                                                                   : juce::String (u8"MIDI-Aktivität (spiel eine Taste zum Testen)")),
+                              juce::dontSendNotification);
+            repaint();
+        }
+
+        AppContext& ctx;
+        juce::Label title, info, activity, empty;
+        juce::Array<juce::MidiDeviceInfo> devices;
+        std::vector<std::unique_ptr<juce::ToggleButton>> toggles;
+        int lastCount = 0, blink = 0, pollCounter = 0;
     };
 
     //==========================================================================
@@ -175,7 +285,8 @@ namespace
         SettingsComponent (AppContext& ctx, int initialTab, std::function<void()> onSchemeChanged)
         {
             const auto bg = theme::colours::panel;
-            tabs.addTab ("Audio & MIDI", bg, new AudioPage (ctx), true);
+            tabs.addTab ("Audio", bg, new AudioPage (ctx), true);
+            tabs.addTab ("MIDI", bg, new MidiPage (ctx), true);
             tabs.addTab ("Plug-ins", bg, new PluginPage (ctx), true);
             tabs.addTab ("Darstellung", bg, new AppearancePage (ctx, std::move (onSchemeChanged)), true);
             tabs.setCurrentTabIndex (initialTab);
@@ -218,9 +329,10 @@ namespace
             };
 
             add ("settings.open", u8"Einstellungen …", 10, 0, { juce::KeyPress (',', juce::ModifierKeys::commandModifier, 0) });
-            add ("settings.audioMidi", u8"Audio & MIDI (Soundkarte, Puffer, Keyboards) …", 20, 0, {}, true);
-            add ("settings.plugins", u8"Plug-ins …", 30, 1, {});
-            add ("settings.appearance", u8"Darstellung (Farbschema) …", 40, 2, {});
+            add ("settings.audioMidi", u8"Audio (Soundkarte, Puffer) …", 20, 0, {}, true);
+            add ("settings.midi", u8"MIDI (Keyboards, Controller) …", 25, 1, {});
+            add ("settings.plugins", u8"Plug-ins …", 30, 2, {});
+            add ("settings.appearance", u8"Darstellung (Farbschema) …", 40, 3, {});
 
             ActionInfo scan;
             scan.id = "settings.scanPlugins";
@@ -246,7 +358,7 @@ namespace
             {
                 if (window != nullptr)
                     window->exitModalState (0); // deletes the dialog
-                juce::MessageManager::callAsync ([this] { show (2); });
+                juce::MessageManager::callAsync ([this] { show (3); });
             }));
             o.dialogTitle = juce::String (u8"SM Studio – Einstellungen");
             o.dialogBackgroundColour = theme::colours::panel;

@@ -267,6 +267,41 @@ public:
             expect (tail.getMagnitude (0, at (0.45), at (0.1)) < 1e-4f, "note released after stop");
         }
 
+        beginTest ("after a device change, snapshots for the old rate stay silent");
+        {
+            Fixture f;
+            PluginHost host ({});
+            host.setPlaybackFormat (Fixture::sr, 512);
+            Track t;
+            t.id = f.song.newId();
+            t.typeId = "instrument";
+            t.instrumentPluginId = "builtin:testsynth";
+            const auto tid = t.id;
+            f.history.perform (std::make_unique<commands::AddTrack> (std::move (t)));
+            Region r;
+            r.id = f.song.newId();
+            r.kind = Region::Kind::midi;
+            r.length = 960 * 8;
+            r.notes.push_back ({ f.song.newId(), 0, 960 * 8, 60, 0.8f });
+            f.history.perform (std::make_unique<commands::AddRegion> (tid, r));
+            f.engine.publish (buildRenderSnapshot (f.song, *f.pool, Fixture::sr, &host));
+
+            f.engine.prepareToPlay (44100.0, 1024); // sound card changed: other rate and buffer
+            auto out = f.render (0.0, 0.2, 1024);
+            expect (out.getMagnitude (0, out.getNumSamples()) < 1e-6f, "silent until rebuilt for the new device");
+
+            // EngineSync prepares the plug-in (not in use any more) and rebuilds
+            host.setPlaybackFormat (44100.0, 1024);
+            auto snap = buildRenderSnapshot (f.song, *f.pool, 44100.0, &host);
+            for (auto& tr : snap->tracks)
+                if (tr.instrument != nullptr)
+                    PluginHost::prepare (*tr.instrument, 44100.0, 1024);
+            f.engine.publish (std::move (snap));
+            out = f.render (0.0, 0.2, 1024);
+            expect (out.getMagnitude (0, out.getNumSamples()) > 0.01f, "plays again after rebuilding");
+            f.engine.prepareToPlay (Fixture::sr, 512);
+        }
+
         beginTest ("snapshots are freed when no longer used");
         {
             Fixture f;

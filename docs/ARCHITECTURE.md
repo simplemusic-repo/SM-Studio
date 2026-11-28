@@ -66,9 +66,12 @@ aktualisieren sich selbst. `Selection` (nicht rückgängig machbar) meldet Auswa
 
 ### Plug-ins
 
-- **`PluginHost`** (engine): Liste der installierten Plug-ins (`KnownPluginList`, Scan im
-  Hintergrund-Thread mit „Dead-Man's-Pedal“-Datei, gespeichert in `plugins.xml` im
-  Einstellungsordner) und Instanzen je **Besitzer** (Spur-ID für das Instrument, Slot-ID für
+- **`PluginHost`** (engine): Liste der installierten Plug-ins (`KnownPluginList`, gespeichert in
+  `plugins.xml` im Einstellungsordner). Der Scan läuft in einem Hintergrund-Thread, der jede
+  Plug-in-Datei in einem **eigenen Kindprozess** prüft (`SM Studio --scan-plugin <Format> <Datei>
+  <Ergebnis.xml>`): Absturz oder > 30 s ohne Ergebnis → Datei kommt auf die Liste der
+  übersprungenen Plug-ins; Abbrechen beendet den Kindprozess sofort. Benutzungszähler für die
+  Browser-Favoriten liegen in `usage.xml` und Instanzen je **Besitzer** (Spur-ID für das Instrument, Slot-ID für
   Inserts). Instanzen entstehen asynchron; bis sie bereit sind, fehlen sie im Snapshot. Da sie
   je Besitzer zwischengespeichert bleiben, stellt Undo/Redo dieselbe Instanz mit ihren
   Einstellungen wieder her.
@@ -77,7 +80,10 @@ aktualisieren sich selbst. `Selection` (nicht rückgängig machbar) meldet Auswa
 - Der Audio-Thread rendert je Spur: Audio-Clips → Instrument (MIDI aus dem Snapshot,
   Transponieren/Anschlag bereits eingerechnet) → Inserts → Lautstärke/Pan. Blöcke werden auf
   die vorbereitete Blockgröße begrenzt; `prepareToPlay` nur, wenn der Audio-Thread das Plug-in
-  nicht benutzt (Geräte-Neustart bzw. `AudioEngine::isProcessorInUse`).
+  nicht benutzt (`AudioEngine::isProcessorInUse`). Nach einem Gerätewechsel rendert der
+  Audio-Thread Snapshots mit alter Abtastrate/zu kleiner Blockgröße nicht (Stille);
+  `EngineSync` veröffentlicht erst einen Snapshot ohne Plug-ins, bereitet diese dann auf dem
+  Message-Thread neu vor und hängt sie wieder ein.
 - Eingebaute Instrumente (`builtin:…`, z. B. „SM Testsynth“) sind normale `AudioProcessor`.
 - **`PluginWindows`** (app) öffnet die Editoren; Fenster halten das Plug-in am Leben.
 

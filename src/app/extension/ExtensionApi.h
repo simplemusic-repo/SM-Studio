@@ -178,6 +178,26 @@ public:
     };
     virtual std::vector<Button> getButtons() { return {}; }
 
+    /** Optional ways to group/sort the list ("Hersteller", "Art", "Favoriten" ...),
+        shown as a selector above the list. The panel remembers the choice. */
+    virtual juce::StringArray getSortModes() { return {}; }
+    virtual void setSortMode (int) {}
+
+    /** True if getItems() already returns the final order (the panel then only
+        groups consecutive items by category instead of sorting them). */
+    virtual bool keepsItemOrder() { return false; }
+
+    /** Optional right-click menu for an item. */
+    struct MenuEntry
+    {
+        juce::String text;
+        std::function<void()> onClick;
+    };
+    virtual std::vector<MenuEntry> getItemMenu (const BrowserItem&) { return {}; }
+
+    /** Optional tooltip for an item. */
+    virtual juce::String getItemTooltip (const BrowserItem&) { return {}; }
+
     /** Optional own view instead of the standard list (e.g. a folder tree).
         Items in it should be draggable with BrowserItem::toDragDescription(). */
     virtual std::unique_ptr<juce::Component> createView (AppContext&) { return nullptr; }

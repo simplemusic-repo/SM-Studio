@@ -292,6 +292,7 @@ public:
         slot.id = ctx.song.newId();
         slot.pluginId = item.id;
         slot.name = item.name;
+        ctx.plugins.noteUsed (item.id);
 
         const auto* t = ctx.song.findTrack (trackId);
         if (t != nullptr && replaceIndex >= 0 && replaceIndex < (int) t->inserts.size())
@@ -749,6 +750,9 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
         b->onClick = [this, i] { selectTab ((int) i); };
         addAndMakeVisible (b);
 
+        if (sources[i]->getSortModes().size() > 0)
+            sources[i]->setSortMode (ctx.settings.getIntValue ("browser." + sources[i]->getId() + ".sort", 0));
+
         sources[i]->onItemsChanged = [safe = juce::Component::SafePointer<BrowserPanel> (this)]
         {
             juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->reload(); });
@@ -778,7 +782,7 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
     hint.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (hint);
 
-    selectTab (0);
+    selectTab (juce::jlimit (0, juce::jmax (0, (int) sources.size() - 1), ctx.settings.getIntValue ("browser.tab", 0)));
 }
 
 BrowserPanel::~BrowserPanel()
@@ -790,6 +794,7 @@ BrowserPanel::~BrowserPanel()
 void BrowserPanel::selectTab (int index)
 {
     currentTab = index;
+    ctx.settings.setValue ("browser.tab", index);
     for (int i = 0; i < tabs.size(); ++i)
         tabs[i]->setToggleState (i == index, juce::dontSendNotification);
 
@@ -815,6 +820,41 @@ void BrowserPanel::selectTab (int index)
     for (auto* c : std::initializer_list<juce::Component*> { &search, &list, &hint, &status })
         c->setVisible (activeView == nullptr);
 
+    // sort / group selector ("Hersteller | Art | Favoriten")
+    sortButtons.clear();
+    if (activeView == nullptr && index >= 0 && index < (int) sources.size())
+    {
+        auto source = sources[(size_t) index];
+        const auto modes = source->getSortModes();
+        const auto current = ctx.settings.getIntValue ("browser." + source->getId() + ".sort", 0);
+        for (int m = 0; m < modes.size(); ++m)
+        {
+            auto* b = sortButtons.add (new juce::TextButton (modes[m]));
+            b->setTooltip (modes[m] == "Favoriten" ? juce::String (u8"Die am häufigsten benutzten Plug-ins zuerst")
+                                                   : juce::String ("Nach ") + modes[m] + " gruppieren");
+            b->setWantsKeyboardFocus (false);
+            b->setToggleState (m == current, juce::dontSendNotification);
+            b->setConnectedEdges ((m > 0 ? juce::Button::ConnectedOnLeft : 0) | (m < modes.size() - 1 ? juce::Button::ConnectedOnRight : 0));
+            b->onClick = [this, m] { setSortMode (m); };
+            addAndMakeVisible (b);
+        }
+    }
+
+    reload();
+}
+
+void BrowserPanel::setSortMode (int mode)
+{
+    auto& sources = ctx.registry.getBrowserSources();
+    if (currentTab < 0 || currentTab >= (int) sources.size())
+        return;
+
+    auto source = sources[(size_t) currentTab];
+    source->setSortMode (mode);
+    ctx.settings.setValue ("browser." + source->getId() + ".sort", mode);
+    for (int i = 0; i < sortButtons.size(); ++i)
+        sortButtons[i]->setToggleState (i == mode, juce::dontSendNotification);
+    list.deselectAllRows();
     reload();
 }
 
@@ -846,7 +886,8 @@ void BrowserPanel::reload()
         auto items = sources[(size_t) currentTab]->getItems();
         const auto filter = search.getText().trim();
 
-        std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.category.compareNatural (b.category) < 0; });
+        if (! sources[(size_t) currentTab]->keepsItemOrder())
+            std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.category.compareNatural (b.category) < 0; });
 
         juce::String lastCategory = "\x01";
         for (auto& item : items)
@@ -930,9 +971,48 @@ void BrowserPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
 
 juce::String BrowserPanel::getTooltipForRow (int row)
 {
-    if (row >= 0 && row < (int) rows.size() && rows[(size_t) row].item.kind == "audiofile")
-        return rows[(size_t) row].item.id;
+    if (row < 0 || row >= (int) rows.size() || rows[(size_t) row].isHeader)
+        return {};
+
+    auto& item = rows[(size_t) row].item;
+    if (item.kind == "audiofile")
+        return item.id;
+
+    auto& sources = ctx.registry.getBrowserSources();
+    if (currentTab >= 0 && currentTab < (int) sources.size())
+        return sources[(size_t) currentTab]->getItemTooltip (item);
     return {};
+}
+
+void BrowserPanel::listBoxItemClicked (int row, const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu() || row < 0 || row >= (int) rows.size() || rows[(size_t) row].isHeader)
+        return;
+
+    auto& sources = ctx.registry.getBrowserSources();
+    if (currentTab < 0 || currentTab >= (int) sources.size())
+        return;
+
+    const auto item = rows[(size_t) row].item;
+    auto entries = sources[(size_t) currentTab]->getItemMenu (item);
+
+    juce::PopupMenu m;
+    m.addSectionHeader (item.name);
+    m.addItem (1000, u8"Einfügen (wie Doppelklick)");
+    if (! entries.empty())
+        m.addSeparator();
+    for (size_t i = 0; i < entries.size(); ++i)
+        m.addItem ((int) i + 1, entries[i].text);
+
+    // the actions may rebuild the list: run them after the menu has closed
+    m.showMenuAsync (juce::PopupMenu::Options().withMousePosition(),
+                     [&c = ctx, item, entries] (int result)
+                     {
+                         if (result == 1000)
+                             activateBrowserItem (c, item);
+                         else if (result > 0 && result <= (int) entries.size() && entries[(size_t) result - 1].onClick)
+                             entries[(size_t) result - 1].onClick();
+                     });
 }
 
 void BrowserPanel::paint (juce::Graphics& g)
@@ -962,6 +1042,15 @@ void BrowserPanel::resized()
 
     search.setBounds (r.removeFromTop (26));
     r.removeFromTop (6);
+
+    if (! sortButtons.isEmpty())
+    {
+        auto row = r.removeFromTop (24);
+        const auto w = row.getWidth() / sortButtons.size();
+        for (auto* b : sortButtons)
+            b->setBounds (row.removeFromLeft (w));
+        r.removeFromTop (6);
+    }
 
     // buttons on the left, status text next to them
     if (! sourceButtons.isEmpty() || status.getText().isNotEmpty())

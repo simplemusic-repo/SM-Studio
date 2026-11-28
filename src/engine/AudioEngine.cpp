@@ -83,7 +83,9 @@ void AudioEngine::prepareToPlay (double newSampleRate, int maxBlockSize)
     scratch.setSize (maxChannels, maxBlockSize);
     metronome.prepare (newSampleRate);
     liveCollector.reset (newSampleRate);
-    prepareSnapshotProcessors (newSampleRate, maxBlockSize);
+    // plug-ins are NOT prepared here (this may run on the driver's thread):
+    // snapshots built for another rate/size are silent until EngineSync has
+    // prepared the plug-ins on the message thread and published a new one.
 }
 
 void AudioEngine::setPositionSeconds (double seconds) noexcept
@@ -142,19 +144,6 @@ void AudioEngine::collectGarbage()
                  owned.end());
 }
 
-void AudioEngine::prepareSnapshotProcessors (double sr, int blockSize)
-{
-    // called while no audio callback runs (device (re)start or before playback)
-    if (auto* snap = current.load())
-        for (auto& t : snap->tracks)
-        {
-            if (t.instrument != nullptr)
-                PluginHost::prepare (*t.instrument, sr, blockSize);
-            for (auto& p : t.inserts)
-                PluginHost::prepare (*p, sr, blockSize);
-        }
-}
-
 bool AudioEngine::isProcessorInUse (const juce::AudioProcessor* p) const
 {
     for (auto* snap : { current.load(), inUse.load() })
@@ -211,6 +200,11 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
         snap = current.load();
         inUse.store (snap);
     } while (snap != current.load());
+
+    // a snapshot made for another sample rate / block size must not be played
+    // (plug-ins would run unprepared): stay silent until the new one arrives
+    if (snap != nullptr && (! juce::approximatelyEqual (snap->sampleRate, sampleRate.load()) || snap->maxBlock < scratch.getNumSamples()))
+        snap = nullptr;
 
     const bool isNowPlaying = playing.load();
     if (isNowPlaying != wasPlaying)

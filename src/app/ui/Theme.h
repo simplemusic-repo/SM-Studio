@@ -103,6 +103,9 @@ public:
     void drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics&) override;
     void drawTabAreaBehindFrontButton (juce::TabbedButtonBar&, juce::Graphics&, int, int) override;
 
+    void drawProgressBar (juce::Graphics&, juce::ProgressBar&, int width, int height, double progress,
+                          const juce::String& text) override;
+
     void drawComboBox (juce::Graphics&, int w, int h, bool down, int bx, int by, int bw, int bh, juce::ComboBox&) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;
     juce::Font getPopupMenuFont() override;

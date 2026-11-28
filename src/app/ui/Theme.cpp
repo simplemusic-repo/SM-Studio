@@ -523,6 +523,27 @@ void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int 
     g.drawLine (juce::Line<float> (centre, centre.getPointOnCircumference (radius - 3, angle)), 1.5f);
 }
 
+void LookAndFeel::drawProgressBar (juce::Graphics& g, juce::ProgressBar&, int width, int height, double progress,
+                                   const juce::String& text)
+{
+    auto r = juce::Rectangle<float> ((float) width, (float) height);
+    g.setColour (colours::panelDark);
+    g.fillRoundedRectangle (r, 3.0f);
+
+    if (progress >= 0.0 && progress <= 1.0)
+    {
+        g.setColour (colours::accent);
+        g.fillRoundedRectangle (r.withWidth (r.getWidth() * (float) progress), 3.0f);
+    }
+
+    if (text.isNotEmpty())
+    {
+        g.setColour (colours::text);
+        g.setFont (font (12.5f, true));
+        g.drawText (text, r, juce::Justification::centred);
+    }
+}
+
 int LookAndFeel::getTabButtonBestWidth (juce::TabBarButton& b, int depth)
 {
     return juce::jmax (depth * 2, (int) juce::GlyphArrangement::getStringWidth (juce::Font (font (14.0f)), b.getButtonText()) + 28);
