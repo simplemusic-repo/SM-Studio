@@ -15,5 +15,7 @@ std::unique_ptr<Module> createCoreModule();
 std::unique_ptr<Module> createTransportModule();
 std::unique_ptr<Module> createBrowserModule();
 std::unique_ptr<Module> createPanelsModule();
+std::unique_ptr<Module> createMidiModule();
+std::unique_ptr<Module> createSettingsModule();
 
 } // namespace sms

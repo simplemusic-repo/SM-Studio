@@ -11,6 +11,8 @@ std::vector<std::unique_ptr<Module>> createBuiltInModules()
     m.push_back (createTransportModule()); // play/stop/metronome actions
     m.push_back (createBrowserModule());   // browser tabs + drop handlers
     m.push_back (createPanelsModule());    // inspector, browser, console panels
+    m.push_back (createMidiModule());      // live MIDI, on-screen keyboard
+    m.push_back (createSettingsModule());  // settings window: audio & MIDI, plug-ins, appearance
     return m;
 }
 

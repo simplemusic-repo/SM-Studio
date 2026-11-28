@@ -32,7 +32,15 @@ std::optional<BrowserItem> BrowserItem::fromDragDescription (const juce::var& v)
 //==============================================================================
 void ExtensionRegistry::addAction (ActionInfo a)
 {
-    jassert (findAction (a.id) == nullptr); // duplicate action id
+    // registering an id again replaces the action (e.g. when the main window is rebuilt)
+    for (auto& existing : actions)
+    {
+        if (existing.id == a.id)
+        {
+            existing = std::move (a);
+            return;
+        }
+    }
     actions.push_back (std::move (a));
 }
 

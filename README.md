@@ -33,6 +33,13 @@ Instrument aus dem Browser ins Arrangement ziehen = neue Instrumentenspur; Effek
 einen Kanal ziehen = Insert. Plug-in-Fenster: „Öffnen“ im Inspector bzw. Doppelklick auf einen Insert.
 Ohne eigene Plug-ins kann man mit dem eingebauten „SM Testsynth“ testen.
 
+**Einstellungen** (Menü „Einstellungen“, Strg/Cmd+,): Soundkarte und Treiber (Windows: ASIO), Abtastrate,
+Puffergröße, MIDI-Eingänge, Plug-in-Suche und Farbschema. MIDI-Keyboards und die Bildschirm-Klaviatur (F7)
+spielen die ausgewählte Instrumentenspur.
+
+ASIO-Unterstützung nutzt das Steinberg ASIO SDK unter dessen GPLv3-Lizenzoption; „ASIO“ ist eine Marke der
+Steinberg Media Technologies GmbH.
+
 **Maus im Arrangement:** Event anklicken = auswählen (Strg/Cmd oder Umschalt: hinzufügen),
 ziehen = verschieben, Alt+Ziehen = kopieren, Ränder ziehen = Länge ändern, Umschalt beim Ziehen = ohne Raster.
 Leere Fläche ziehen = Auswahlrahmen. Lineal oben ziehen = Loop-Bereich, unten klicken = Abspielposition.

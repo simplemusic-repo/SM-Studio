@@ -23,14 +23,30 @@ namespace sms
         which snapshot it is using, the message thread only deletes snapshots that
         are neither current nor in use (see collectGarbage()).
 */
-class AudioEngine final : private juce::AudioIODeviceCallback
+class AudioEngine final : private juce::AudioIODeviceCallback,
+                          private juce::MidiInputCallback
 {
 public:
     AudioEngine();
     ~AudioEngine() override;
 
-    /** Opens the default output device. Returns an error message or empty string. */
-    juce::String initialiseAudio();
+    /** Opens the audio device (the saved setup, or the default output) and all
+        enabled MIDI inputs. Returns an error message or empty string. */
+    juce::String initialiseAudio (const juce::XmlElement* savedState = nullptr);
+
+    /** Audio/MIDI device setup for saving in the settings. */
+    std::unique_ptr<juce::XmlElement> createDeviceStateXml() const { return deviceManager.createStateXml(); }
+
+    //==========================================================================
+    // Live MIDI (keyboard, on-screen keyboard) goes to one instrument track
+    void setLiveMidiTrack (ObjectId id) noexcept { liveTrack.store (id.value); }
+    ObjectId getLiveMidiTrack() const noexcept { return { liveTrack.load() }; }
+
+    /** Thread-safe: queue a message for the live track (e.g. from the on-screen keyboard). */
+    void addLiveMidi (const juce::MidiMessage&);
+
+    /** Number of live MIDI messages received so far (for activity display). */
+    int getLiveMidiCount() const noexcept { return liveMidiCount.load(); }
     void shutdownAudio();
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
@@ -97,7 +113,8 @@ private:
     void audioDeviceStopped() override;
 
     void renderSegment (const RenderSnapshot&, float* left, float* right, std::int64_t start, int n,
-                        bool isPlaying, bool sendNotesOff) noexcept;
+                        bool isPlaying, bool sendNotesOff, int blockOffset) noexcept;
+    void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
     void prepareSnapshotProcessors (double sampleRate, int blockSize);
 
     juce::AudioDeviceManager deviceManager;
@@ -123,7 +140,10 @@ private:
     bool wasPlaying = false;
     static constexpr int maxChannels = 8;
     juce::AudioBuffer<float> scratch;
-    juce::MidiBuffer midi;
+    juce::MidiBuffer midi, liveBlock;
+    juce::MidiMessageCollector liveCollector;
+    std::atomic<std::uint64_t> liveTrack { 0 };
+    std::atomic<int> liveMidiCount { 0 };
     std::vector<std::bitset<128>> activeNotes;
     std::vector<std::array<float, 2>> lastGains;
     std::vector<ObjectId> lastGainIds;

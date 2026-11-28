@@ -39,6 +39,11 @@ public:
 
     /** Asks the scan to stop after the current plug-in (the list found so far is kept). */
     void cancelScan() { signalThreadShouldExit(); }
+
+    /** Forgets plug-ins that were skipped because they crashed during a scan. */
+    void clearSkippedPlugins() { known.clearBlacklistedFiles(); saveList(); sendChangeMessage(); }
+    int getNumSkippedPlugins() const { return known.getBlacklistedFiles().size(); }
+    juce::StringArray getSkippedPlugins() const { return known.getBlacklistedFiles(); }
     bool isCancelling() const { return isThreadRunning() && threadShouldExit(); }
 
     /** 0..1 while scanning, and the plug-in currently being checked. */

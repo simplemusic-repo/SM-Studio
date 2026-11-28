@@ -48,7 +48,8 @@ namespace
 
         std::vector<Button> getButtons() override
         {
-            return { { "Plug-ins suchen", u8"Installierte VST3-Plug-ins (am Mac auch Audio Units) suchen", [this] { startPluginScanWithProgress (ctx); } } };
+            return { { juce::String (u8"↻"), u8"Plug-in-Liste aktualisieren (nach neuen Plug-ins suchen)",
+                       [this] { startPluginScanWithProgress (ctx); } } };
         }
 
     private:

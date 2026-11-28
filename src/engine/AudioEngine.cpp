@@ -19,6 +19,7 @@ AudioEngine::AudioEngine()
     lastGainIds.resize (maxTracks);
     activeNotes.resize (maxTracks);
     midi.ensureSize (16384);
+    liveBlock.ensureSize (4096);
     prepareToPlay (44100.0, 512);
 }
 
@@ -29,15 +30,37 @@ AudioEngine::~AudioEngine()
     inUse.store (nullptr);
 }
 
-juce::String AudioEngine::initialiseAudio()
+juce::String AudioEngine::initialiseAudio (const juce::XmlElement* savedState)
 {
-    auto error = deviceManager.initialiseWithDefaultDevices (0, 2);
+    auto error = deviceManager.initialise (0, 2, savedState, true);
+
+    // first start: listen to every connected MIDI keyboard
+    if (savedState == nullptr)
+        for (auto& d : juce::MidiInput::getAvailableDevices())
+            deviceManager.setMidiInputDeviceEnabled (d.identifier, true);
+
+    deviceManager.addMidiInputDeviceCallback ({}, this); // all enabled inputs
     deviceManager.addAudioCallback (this);
     return error;
 }
 
+void AudioEngine::addLiveMidi (const juce::MidiMessage& m)
+{
+    auto copy = m;
+    copy.setTimeStamp (juce::Time::getMillisecondCounterHiRes() * 0.001);
+    liveCollector.addMessageToQueue (copy);
+    liveMidiCount.fetch_add (1);
+}
+
+void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
+{
+    if (m.isNoteOnOrOff() || m.isController() || m.isPitchWheel() || m.isAftertouch() || m.isChannelPressure())
+        addLiveMidi (m);
+}
+
 void AudioEngine::shutdownAudio()
 {
+    deviceManager.removeMidiInputDeviceCallback ({}, this);
     deviceManager.removeAudioCallback (this);
     deviceManager.closeAudioDevice();
 }
@@ -59,6 +82,7 @@ void AudioEngine::prepareToPlay (double newSampleRate, int maxBlockSize)
     maxBlock.store (maxBlockSize);
     scratch.setSize (maxChannels, maxBlockSize);
     metronome.prepare (newSampleRate);
+    liveCollector.reset (newSampleRate);
     prepareSnapshotProcessors (newSampleRate, maxBlockSize);
 }
 
@@ -197,6 +221,9 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
 
     bool notesOff = notesOffPending.exchange (false);
 
+    liveBlock.clear();
+    liveCollector.removeNextBlockOfMessages (liveBlock, numSamples);
+
     const auto sr = sampleRate.load();
     const auto startPos = positionSamples.load();
     auto pos = startPos;
@@ -219,7 +246,7 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
 
         // plug-ins run even when stopped (reverb tails, releasing notes)
         if (snap != nullptr)
-            renderSegment (*snap, segL, segR, pos, n, isNowPlaying, notesOff);
+            renderSegment (*snap, segL, segR, pos, n, isNowPlaying, notesOff, done);
         notesOff = false;
 
         if (isNowPlaying)
@@ -298,8 +325,9 @@ namespace
 }
 
 void AudioEngine::renderSegment (const RenderSnapshot& snap, float* outL, float* outR, std::int64_t start, int n,
-                                 bool isPlaying, bool sendNotesOff) noexcept
+                                 bool isPlaying, bool sendNotesOff, int blockOffset) noexcept
 {
+    const auto liveId = liveTrack.load();
     const auto end = start + n;
     const auto numTracks = std::min ((int) snap.tracks.size(), maxTracks);
 
@@ -402,6 +430,23 @@ void AudioEngine::renderSegment (const RenderSnapshot& snap, float* outL, float*
                         notes.set (it->data1);
                     else
                         notes.reset (it->data1);
+                }
+            }
+
+            // live input (keyboard / on-screen keyboard) for the selected instrument track
+            if (track.id.value == liveId && ! liveBlock.isEmpty())
+            {
+                for (const auto meta : liveBlock)
+                {
+                    const auto pos = meta.samplePosition - blockOffset;
+                    if (pos < 0 || pos >= n)
+                        continue;
+                    midi.addEvent (meta.data, meta.numBytes, pos);
+                    const auto msg = meta.getMessage();
+                    if (msg.isNoteOn())
+                        notes.set ((size_t) msg.getNoteNumber());
+                    else if (msg.isNoteOff())
+                        notes.reset ((size_t) msg.getNoteNumber());
                 }
             }
 

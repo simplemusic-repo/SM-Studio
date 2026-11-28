@@ -21,6 +21,8 @@ target_sources(SMStudio PRIVATE
     modules/TransportModule.cpp
     modules/BrowserModule.cpp
     modules/PanelsModule.cpp
+    modules/MidiModule.cpp
+    modules/SettingsModule.cpp
     ui/Theme.h
     ui/Theme.cpp
     ui/Bars.h

@@ -77,7 +77,7 @@ struct AppState final
     PluginWindows pluginWindows { plugins }; // destroyed before the plug-ins
     ExtensionRegistry registry;
     EditState edit;
-    AppContext ctx { song, history, selection, engine, pool, plugins, pluginWindows, registry, edit, settings };
+    AppContext ctx { song, history, selection, engine, pool, plugins, pluginWindows, registry, edit, settings, {} };
 };
 
 //==============================================================================
@@ -134,6 +134,16 @@ public:
 
     void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 
+    /** Recreates the UI (after a colour scheme change). Song, history and layout are kept. */
+    void rebuildContent()
+    {
+        if (auto* main = dynamic_cast<MainComponent*> (getContentComponent()))
+            main->saveLayout();
+        setBackgroundColour (theme::colours::window);
+        setContentOwned (new MainComponent (ctx), false);
+        getContentComponent()->grabKeyboardFocus();
+    }
+
 private:
     AppContext& ctx;
 
@@ -148,8 +158,40 @@ public:
     const juce::String getApplicationVersion() override { return SMS_VERSION_STRING; }
     bool moreThanOneInstanceAllowed() override { return true; }
 
+    /** German texts for JUCE's built-in dialogs (audio device settings). */
+    static void installTranslations()
+    {
+        auto* t = new juce::LocalisedStrings (juce::String::fromUTF8 (
+            "language: Deutsch\n"
+            "\"Audio device type:\" = \"Treiber:\"\n"
+            "\"Device:\" = \"Gerät:\"\n"
+            "\"Output:\" = \"Ausgang:\"\n"
+            "\"Input:\" = \"Eingang:\"\n"
+            "\"Sample rate:\" = \"Abtastrate:\"\n"
+            "\"Audio buffer size:\" = \"Puffergröße:\"\n"
+            "\"Active MIDI inputs:\" = \"MIDI-Eingänge:\"\n"
+            "\"MIDI Output:\" = \"MIDI-Ausgang:\"\n"
+            "\"Active input channels:\" = \"Aktive Eingänge:\"\n"
+            "\"Active output channels:\" = \"Aktive Ausgänge:\"\n"
+            "\"(no audio input channels found)\" = \"(keine Audio-Eingänge gefunden)\"\n"
+            "\"(no audio output channels found)\" = \"(keine Audio-Ausgänge gefunden)\"\n"
+            "\"No MIDI inputs available\" = \"Keine MIDI-Eingänge vorhanden\"\n"
+            "\"Control Panel\" = \"Treiber-Einstellungen\"\n"
+            "\"Opens the device's own control panel\" = \"Öffnet die Einstellungen des Soundkarten-Treibers (z. B. ASIO-Puffer)\"\n"
+            "\"Plays a test tone\" = \"Spielt einen Testton\"\n"
+            "\"Reset Device\" = \"Gerät zurücksetzen\"\n"
+            "\"Show advanced settings...\" = \"Erweiterte Einstellungen …\"\n"
+            "\"Error when trying to open audio device!\" = \"Das Audiogerät konnte nicht geöffnet werden!\"\n"
+            "\"Scan for bluetooth MIDI devices\" = \"Bluetooth-MIDI-Geräte suchen\"\n"
+            "\"none\" = \"keins\"\n"
+            "\"samples\" = \"Samples\"\n"
+            "\"Hide advanced settings\" = \"Erweiterte Einstellungen ausblenden\"\n"), false);
+        juce::LocalisedStrings::setCurrentMappings (t);
+    }
+
     void initialise (const juce::String& commandLine) override
     {
+        installTranslations();
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
         const auto args = juce::StringArray::fromTokens (commandLine, true);
@@ -165,6 +207,7 @@ public:
         for (auto& m : createBuiltInModules())
             state->registry.addModule (std::move (m));
         state->registry.initialiseModules (state->ctx);
+        lookAndFeel.refreshColours(); // colour scheme from the settings (applied by the settings module)
 
         if (args.contains ("--demo") || args.contains ("--screenshot"))
             createDemoSong (state->ctx);
@@ -176,10 +219,18 @@ public:
             return;
         }
 
-        if (auto error = state->engine.initialiseAudio(); error.isNotEmpty())
+        const auto savedDevice = state->settings.getXmlValue ("audio.deviceState");
+        if (auto error = state->engine.initialiseAudio (savedDevice.get()); error.isNotEmpty())
             juce::Logger::writeToLog ("Audio initialisation failed: " + error);
 
         mainWindow = std::make_unique<MainWindow> (state->ctx);
+
+        state->ctx.rebuildUi = [this]
+        {
+            lookAndFeel.refreshColours();
+            if (mainWindow != nullptr)
+                mainWindow->rebuildContent();
+        };
 
         // first start: look for installed plug-ins in the background
         if (! AppState::dataFolder().getChildFile ("plugins.xml").existsAsFile())
@@ -193,6 +244,9 @@ public:
         if (state != nullptr)
         {
             state->pluginWindows.closeAll();
+
+            if (auto xml = state->engine.createDeviceStateXml())
+                state->settings.setValue ("audio.deviceState", xml.get());
             state->engine.shutdownAudio();
             state->registry.shutdownModules();
         }

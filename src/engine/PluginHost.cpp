@@ -56,7 +56,7 @@ juce::String PluginHost::getStatusText() const
         return juce::String (u8"Suche Plug-ins … ") + scanningName;
 
     if (count == 0)
-        return juce::String (u8"Noch keine Plug-ins gefunden – „Plug-ins suchen“ klicken.");
+        return juce::String (u8"Noch keine Plug-ins gefunden – Einstellungen → Plug-ins suchen.");
 
     auto text = juce::String (count) + " Plug-ins";
     if (const auto blacklisted = known.getBlacklistedFiles().size(); blacklisted > 0)

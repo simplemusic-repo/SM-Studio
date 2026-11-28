@@ -14,6 +14,52 @@ juce::Colour trackColour (int index)
     return juce::Colour (palette[((index % n) + n) % n]);
 }
 
+juce::StringArray schemeNames()
+{
+    return { "Studio Dunkel", "Graphit", "Mitternacht", "Hell" };
+}
+
+void applyScheme (int index)
+{
+    using namespace colours;
+    struct Scheme { juce::uint32 window, panel, panelDark, panelLight, header, headerLight, border, separator,
+                    laneA, laneB, laneSelected, gridBar, gridBeat, text, textDim, textDark, accent, accentDim,
+                    playhead, lcd, lcdText; };
+
+    static const Scheme schemes[] = {
+        // Studio Dunkel (default)
+        { 0xff1b1c1f, 0xff2a2c31, 0xff222428, 0xff34373d, 0xff3b3f46, 0xff474b53, 0xff111214, 0xff3f434a,
+          0xff26282c, 0xff232529, 0xff2f3540, 0xff3a3e45, 0xff2e3136, 0xffd9dce1, 0xff8d929b, 0xff1a1b1e,
+          0xff3d9bff, 0xff2a5f99, 0xffe9eef5, 0xff111316, 0xff9fd2ff },
+        // Graphit: neutral grey, orange accent
+        { 0xff202020, 0xff2e2e2e, 0xff262626, 0xff393939, 0xff424242, 0xff4e4e4e, 0xff141414, 0xff474747,
+          0xff2a2a2a, 0xff262626, 0xff3a342d, 0xff434343, 0xff333333, 0xffe0e0e0, 0xff969696, 0xff1a1a1a,
+          0xffff8f2e, 0xff8a5424, 0xfff2f2f2, 0xff121212, 0xffffc58a },
+        // Mitternacht: dark blue, cyan accent
+        { 0xff10141c, 0xff1b2230, 0xff151b27, 0xff242d3d, 0xff2a3447, 0xff354158, 0xff090c12, 0xff2f3a4e,
+          0xff19202c, 0xff161c27, 0xff22324a, 0xff2c374b, 0xff222b3b, 0xffd6e2f2, 0xff8496b0, 0xff0d1118,
+          0xff44c8ff, 0xff1f5f80, 0xffe6f4ff, 0xff0a0e15, 0xff8fe1ff },
+        // Hell
+        { 0xffd4d7dc, 0xffe4e6ea, 0xffcfd3d8, 0xffeef0f2, 0xffc7cbd1, 0xffb8bdc5, 0xff9aa0a8, 0xffb2b7be,
+          0xffe8eaed, 0xffe0e3e7, 0xffcfdaeb, 0xffb5bbc3, 0xffd0d4d9, 0xff1d2026, 0xff59606b, 0xff111214,
+          0xff2f7fe0, 0xff9fc4f0, 0xff20242a, 0xff1b1f25, 0xff9fd2ff },
+    };
+
+    const auto& sc = schemes[(size_t) juce::jlimit (0, (int) std::size (schemes) - 1, index)];
+    window = juce::Colour (sc.window);       panel = juce::Colour (sc.panel);
+    panelDark = juce::Colour (sc.panelDark); panelLight = juce::Colour (sc.panelLight);
+    header = juce::Colour (sc.header);       headerLight = juce::Colour (sc.headerLight);
+    border = juce::Colour (sc.border);       separator = juce::Colour (sc.separator);
+    laneA = juce::Colour (sc.laneA);         laneB = juce::Colour (sc.laneB);
+    laneSelected = juce::Colour (sc.laneSelected);
+    gridBar = juce::Colour (sc.gridBar);     gridBeat = juce::Colour (sc.gridBeat);
+    text = juce::Colour (sc.text);           textDim = juce::Colour (sc.textDim);
+    textDark = juce::Colour (sc.textDark);
+    accent = juce::Colour (sc.accent);       accentDim = juce::Colour (sc.accentDim);
+    playhead = juce::Colour (sc.playhead);
+    lcd = juce::Colour (sc.lcd);             lcdText = juce::Colour (sc.lcdText);
+}
+
 juce::FontOptions font (float height, bool bold)
 {
     return juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain);
@@ -271,6 +317,11 @@ namespace icons
 
 //==============================================================================
 LookAndFeel::LookAndFeel()
+{
+    refreshColours();
+}
+
+void LookAndFeel::refreshColours()
 {
     using namespace colours;
 
@@ -616,7 +667,9 @@ void StateButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
     g.setColour (on ? onColour.darker (0.5f) : colours::border);
     g.drawRoundedRectangle (r, 2.5f, 1.0f);
 
-    g.setColour (on ? colours::textDark : onColour.withMultipliedSaturation (0.75f).withMultipliedBrightness (0.9f));
+    const bool lightTheme = colours::panelDark.getPerceivedBrightness() > 0.5f;
+    const auto offColour = lightTheme ? onColour.darker (0.9f) : onColour.withMultipliedSaturation (0.75f).withMultipliedBrightness (0.9f);
+    g.setColour (on ? colours::textDark : offColour);
     g.setFont (font (juce::jmin (13.0f, (float) getHeight() * 0.62f), true));
     g.drawText (getName(), getLocalBounds(), juce::Justification::centred);
 }

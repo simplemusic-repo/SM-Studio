@@ -99,6 +99,10 @@ struct AppContext
         Saved automatically; keys are namespaced, e.g. "panel.console.visible". */
     juce::PropertySet& settings;
 
+    /** Rebuilds the main window content (e.g. after changing the colour scheme).
+        Set by the application; layout and song are kept. */
+    std::function<void()> rebuildUi;
+
     /** Shorthand: performs an undoable command. */
     bool perform (std::unique_ptr<Command> c, bool allowMerge = false) { return history.perform (std::move (c), allowMerge); }
 };
