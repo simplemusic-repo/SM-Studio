@@ -85,7 +85,7 @@ private:
 class SetTrackParam final : public Command
 {
 public:
-    enum class Param { volumeDb, pan, mute, solo, armed };
+    enum class Param { volumeDb, pan, mute, solo, armed, transpose, velocityOffset };
 
     SetTrackParam (ObjectId id, Param p, float v) : trackId (id), param (p), value (v) {}
 
@@ -174,6 +174,26 @@ private:
     size_t index = 0;
 };
 
+/** Replaces a region with a new state – optionally moving it to another
+    track (same id). Used for move, resize, mute, and split (left part). */
+class UpdateRegion final : public Command
+{
+public:
+    UpdateRegion (ObjectId fromTrack, ObjectId toTrack, Region newState, juce::String name)
+        : from (fromTrack), to (toTrack), region (std::move (newState)), commandName (std::move (name)) {}
+
+    juce::String getName() const override { return commandName; }
+    bool perform (Song&) override;
+    void undo (Song&) override;
+
+private:
+    ObjectId from, to;
+    Region region;
+    std::optional<Region> old;
+    size_t oldIndex = 0;
+    juce::String commandName;
+};
+
 //==============================================================================
 /** Sets (or replaces) the instrument of an instrument track. */
 class SetInstrument final : public Command
@@ -205,6 +225,21 @@ private:
     ObjectId trackId;
     InsertSlot slot;
     int requestedIndex;
+};
+
+class SetInsertBypass final : public Command
+{
+public:
+    SetInsertBypass (ObjectId track, ObjectId slot, bool b) : trackId (track), slotId (slot), bypass (b) {}
+
+    juce::String getName() const override { return "Effekt-Bypass"; }
+    bool perform (Song&) override;
+    void undo (Song&) override;
+
+private:
+    bool set (Song&, bool);
+    ObjectId trackId, slotId;
+    bool bypass;
 };
 
 class RemoveInsert final : public Command

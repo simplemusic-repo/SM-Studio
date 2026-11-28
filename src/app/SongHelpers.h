@@ -22,6 +22,10 @@ bool isSupportedAudioFile (const juce::File&);
     track is created at target.insertIndex. */
 bool importAudioFile (AppContext&, const juce::File&, const DropTarget&);
 
+/** What a double click on a browser item does: like dropping it on the
+    selected track (instruments, effects) or on a new track (audio files). */
+bool activateBrowserItem (AppContext&, const BrowserItem&);
+
 /** Fills the song with example tracks (used for screenshots and first tests). */
 void createDemoSong (AppContext&);
 

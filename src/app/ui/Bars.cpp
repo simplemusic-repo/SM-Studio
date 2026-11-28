@@ -44,6 +44,8 @@ Toolbar::Toolbar (AppContext& c) : ctx (c)
     snapLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (snapLabel);
 
+    snap.addItem ("Adaptiv (Zoom)", EditState::snapAdaptive + 1);
+    snap.addSeparator();
     snap.addItem ("Aus", EditState::snapOff + 1);
     snap.addItem ("Takt", EditState::snapBar + 1);
     snap.addItem (u8"Zählzeit", EditState::snapBeat + 1);
@@ -52,6 +54,7 @@ Toolbar::Toolbar (AppContext& c) : ctx (c)
     snap.setSelectedId ((int) ctx.edit.snap.getValue() + 1, juce::dontSendNotification);
     snap.onChange = [this] { ctx.edit.snap = snap.getSelectedId() - 1; };
     snap.setWantsKeyboardFocus (false);
+    snap.setTooltip (u8"Raster für Verschieben, Länge und Teilen");
     addAndMakeVisible (snap);
 
     ctx.history.addListener (this);
@@ -117,7 +120,7 @@ void Toolbar::resized()
     r.removeFromLeft (16);
     snapLabel.setBounds (r.removeFromLeft (48));
     r.removeFromLeft (4);
-    snap.setBounds (r.removeFromLeft (100));
+    snap.setBounds (r.removeFromLeft (130));
 }
 
 //==============================================================================
@@ -136,8 +139,8 @@ TransportBar::TransportBar (AppContext& c, std::function<bool (const juce::Strin
     stop.onClick      = [this] { ctx.registry.invoke ("transport.stop"); };
     play.onClick      = [this] { ctx.registry.invoke ("transport.play"); };
     metronome.onClick = [this] { ctx.registry.invoke ("transport.metronome"); };
+    loop.onClick      = [this] { ctx.registry.invoke ("transport.loop"); };
     record.setEnabled (false);
-    loop.setEnabled (false);
 
     for (auto* l : { &tempo, &signature })
     {
@@ -179,7 +182,10 @@ TransportBar::TransportBar (AppContext& c, std::function<bool (const juce::Strin
         button->onClick = [this, id] { ctx.registry.invoke (id); refreshToggles(); };
         addAndMakeVisible (*button);
     }
+    inspectorButton.setTooltip ("Inspector ein/aus (F4)");
     editButton.setTooltip ("Editor (folgt mit der Piano Roll)");
+    mixButton.setTooltip ("Konsole ein/aus (F3)");
+    browseButton.setTooltip ("Browser ein/aus (F5)");
 
     ctx.song.addListener (this);
     updateTempoLabels();
@@ -200,12 +206,15 @@ void TransportBar::refreshToggles()
     mixButton.setToggleState (isTicked ("view.console"), juce::dontSendNotification);
     browseButton.setToggleState (isTicked ("view.browser"), juce::dontSendNotification);
     metronome.setToggleState (ctx.engine.isMetronomeEnabled(), juce::dontSendNotification);
+    loop.setToggleState (ctx.song.getLoop().enabled, juce::dontSendNotification);
 }
 
 void TransportBar::songChanged (const SongChange& c)
 {
     if (c.what == SongChange::What::tempoChanged || c.what == SongChange::What::reset)
         updateTempoLabels();
+    if (c.what == SongChange::What::loopChanged)
+        loop.setToggleState (ctx.song.getLoop().enabled, juce::dontSendNotification);
 }
 
 void TransportBar::updateTempoLabels()

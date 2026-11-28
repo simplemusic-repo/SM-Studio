@@ -11,6 +11,7 @@
 #include "SongHelpers.h"
 #include "core/Commands.h"
 #include "extension/ExtensionRegistry.h"
+#include "ui/Theme.h"
 
 namespace sms
 {
@@ -34,61 +35,282 @@ namespace
         std::vector<BrowserItem> items;
     };
 
-    /** Audio files from the user's music folder (scanned on a background thread). */
-    class FileSource final : public BrowserSource,
-                             private juce::Thread,
-                             private juce::AsyncUpdater
+    //==========================================================================
+    // Folder tree ("Dateien"): navigate the file system like in the Explorer /
+    // Finder. Shows folders and audio files; files can be dragged into the
+    // arrangement or double-clicked. The open folders, the selection and the
+    // scroll position are stored and restored on the next start.
+
+    bool isAudioFile (const juce::File& f)
+    {
+        return f.hasFileExtension ("wav;wave;aif;aiff;flac;mp3;ogg");
+    }
+
+    class FileTreeItem final : public juce::TreeViewItem
     {
     public:
-        FileSource() : juce::Thread ("SM Studio file scan") { startThread (juce::Thread::Priority::low); }
-        ~FileSource() override { stopThread (2000); }
-
-        juce::String getId() const override { return "files"; }
-        juce::String getTitle() const override { return "Dateien"; }
-
-        std::vector<BrowserItem> getItems() override
+        FileTreeItem (AppContext& c, juce::File f, juce::String label = {})
+            : ctx (c), file (std::move (f)), isFolder (file.isDirectory()),
+              displayName (label.isNotEmpty() ? label : file.getFileName())
         {
-            const juce::ScopedLock sl (lock);
-            return items;
+            if (displayName.isEmpty())
+                displayName = file.getFullPathName(); // drive roots ("C:\")
+        }
+
+        bool mightContainSubItems() override { return isFolder; }
+        juce::String getUniqueName() const override { return displayName + "|" + file.getFullPathName(); }
+        int getItemHeight() const override { return 22; }
+
+        void itemOpennessChanged (bool isNowOpen) override
+        {
+            if (isNowOpen && ! populated)
+                populate();
+        }
+
+        void populate()
+        {
+            populated = true;
+            clearSubItems();
+
+            auto children = file.findChildFiles (juce::File::findFilesAndDirectories | juce::File::ignoreHiddenFiles, false);
+            std::vector<juce::File> folders, files;
+            for (auto& f : children)
+            {
+                if (f.isDirectory())
+                    folders.push_back (f);
+                else if (isAudioFile (f))
+                    files.push_back (f);
+            }
+
+            auto byName = [] (const juce::File& a, const juce::File& b)
+            {
+                return a.getFileName().compareNatural (b.getFileName()) < 0;
+            };
+            std::sort (folders.begin(), folders.end(), byName);
+            std::sort (files.begin(), files.end(), byName);
+
+            for (auto& f : folders)
+                addSubItem (new FileTreeItem (ctx, f));
+            for (auto& f : files)
+                addSubItem (new FileTreeItem (ctx, f));
+        }
+
+        void refresh()
+        {
+            if (isFolder && populated)
+            {
+                const auto open = isOpen();
+                populate();
+                setOpen (open);
+            }
+        }
+
+        void paintItem (juce::Graphics& g, int w, int h) override
+        {
+            if (isSelected())
+            {
+                g.setColour (theme::colours::accentDim);
+                g.fillRect (0, 0, w, h);
+            }
+
+            auto iconArea = juce::Rectangle<float> (2.0f, 3.0f, 16.0f, (float) h - 6.0f);
+            if (isFolder)
+            {
+                juce::Path p;
+                p.addRoundedRectangle (iconArea.getX(), iconArea.getY() + 3.0f, iconArea.getWidth(), iconArea.getHeight() - 3.0f, 1.5f);
+                p.addRoundedRectangle (iconArea.getX(), iconArea.getY() + 1.0f, iconArea.getWidth() * 0.45f, 4.0f, 1.0f);
+                g.setColour (juce::Colour (0xffd9b45a));
+                g.fillPath (p);
+            }
+            else
+            {
+                auto icon = theme::icons::waveform();
+                g.setColour (theme::colours::textDim);
+                g.fillPath (icon, icon.getTransformToScaleToFit (iconArea, true));
+            }
+
+            g.setColour (theme::colours::text);
+            g.setFont (theme::font (13.0f));
+            g.drawText (displayName, 24, 0, w - 26, h, juce::Justification::centredLeft, true);
+        }
+
+        juce::var getDragSourceDescription() override
+        {
+            if (isFolder)
+                return {};
+            return BrowserItem { "audiofile", file.getFullPathName(), file.getFileNameWithoutExtension(), {} }.toDragDescription();
+        }
+
+        juce::String getTooltip() override { return file.getFullPathName(); }
+
+        void itemDoubleClicked (const juce::MouseEvent&) override
+        {
+            if (isFolder)
+                setOpen (! isOpen());
+            else
+                activateBrowserItem (ctx, { "audiofile", file.getFullPathName(), file.getFileNameWithoutExtension(), {} });
+        }
+
+        void itemClicked (const juce::MouseEvent& e) override
+        {
+            // single click on a folder opens / closes it, like in most DAW browsers
+            if (isFolder && ! e.mods.isPopupMenu() && e.x > 20)
+                setOpen (! isOpen());
         }
 
     private:
-        void run() override
+        AppContext& ctx;
+        juce::File file;
+        bool isFolder;
+        juce::String displayName;
+        bool populated = false;
+    };
+
+    /** Invisible root: shortcuts (Musik, Desktop, ...) and the drives. */
+    class FileTreeRoot final : public juce::TreeViewItem
+    {
+    public:
+        explicit FileTreeRoot (AppContext& ctx)
         {
-            std::vector<BrowserItem> found;
-            const auto root = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-            constexpr int maxFiles = 400;
+            using L = juce::File::SpecialLocationType;
+            const std::pair<L, const char*> shortcuts[] = {
+                { L::userMusicDirectory, "Musik" },
+                { L::userDesktopDirectory, "Desktop" },
+                { L::userDocumentsDirectory, "Dokumente" },
+                { L::userHomeDirectory, "Benutzerordner" },
+            };
 
-            if (root.isDirectory())
+            for (auto& [loc, name] : shortcuts)
             {
-                for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg",
-                                                                        juce::File::findFiles))
-                {
-                    if (threadShouldExit() || (int) found.size() >= maxFiles)
-                        break;
-
-                    const auto f = entry.getFile();
-                    found.push_back ({ "audiofile", f.getFullPathName(), f.getFileName(),
-                                       f.getParentDirectory().getRelativePathFrom (root.getParentDirectory()) });
-                }
+                auto f = juce::File::getSpecialLocation (loc);
+                if (f.isDirectory())
+                    addSubItem (new FileTreeItem (ctx, f, juce::String (name)));
             }
 
-            {
-                const juce::ScopedLock sl (lock);
-                items = std::move (found);
-            }
-
-            triggerAsyncUpdate(); // notify on the message thread
+            juce::Array<juce::File> roots;
+            juce::File::findFileSystemRoots (roots);
+           #if JUCE_MAC
+            for (auto& v : juce::File ("/Volumes").findChildFiles (juce::File::findDirectories, false))
+                roots.addIfNotAlreadyThere (v);
+           #endif
+            for (auto& r : roots)
+                if (r.isDirectory())
+                    addSubItem (new FileTreeItem (ctx, r));
         }
 
-        void handleAsyncUpdate() override
+        bool mightContainSubItems() override { return true; }
+        juce::String getUniqueName() const override { return "root"; }
+    };
+
+    class FileTreeView final : public juce::Component,
+                               private juce::Timer
+    {
+    public:
+        explicit FileTreeView (AppContext& c) : ctx (c), root (c)
         {
-            if (onItemsChanged)
-                onItemsChanged();
+            tree.setRootItem (&root);
+            tree.setRootItemVisible (false);
+            tree.setDefaultOpenness (false);
+            tree.setIndentSize (14);
+            tree.setColour (juce::TreeView::backgroundColourId, theme::colours::panelDark);
+            tree.setColour (juce::TreeView::linesColourId, theme::colours::separator);
+            tree.setColour (juce::TreeView::dragAndDropIndicatorColourId, theme::colours::accent);
+            tree.setColour (juce::TreeView::selectedItemBackgroundColourId, juce::Colours::transparentBlack);
+            addAndMakeVisible (tree);
+
+            refreshButton.setTooltip (u8"Ordnerinhalte neu einlesen");
+            refreshButton.setWantsKeyboardFocus (false);
+            refreshButton.onClick = [this] { refreshAll (&root); };
+            addAndMakeVisible (refreshButton);
+
+            hint.setText (u8"Dateien ins Arrangement ziehen oder doppelklicken", juce::dontSendNotification);
+            hint.setFont (theme::font (12.0f));
+            hint.setColour (juce::Label::textColourId, theme::colours::textDim);
+            hint.setJustificationType (juce::Justification::centred);
+            addAndMakeVisible (hint);
+
+            // restore open folders, selection and scroll position from the last session
+            if (auto xml = juce::parseXML (ctx.settings.getValue ("browser.files.tree")))
+                tree.restoreOpennessState (*xml, true);
+            else
+                openMusicFolder();
+
+            savedState = currentState();
+            startTimer (1000);
         }
 
-        juce::CriticalSection lock;
-        std::vector<BrowserItem> items;
+        ~FileTreeView() override
+        {
+            save();
+            tree.setRootItem (nullptr);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            auto bottom = r.removeFromBottom (24);
+            refreshButton.setBounds (bottom.removeFromRight (100).reduced (0, 1));
+            hint.setBounds (bottom);
+            r.removeFromBottom (4);
+            tree.setBounds (r);
+        }
+
+    private:
+        void openMusicFolder()
+        {
+            if (root.getNumSubItems() > 0)
+            {
+                root.getSubItem (0)->setOpen (true);
+                tree.scrollToKeepItemVisible (root.getSubItem (0));
+            }
+        }
+
+        static void refreshAll (juce::TreeViewItem* item)
+        {
+            for (int i = 0; i < item->getNumSubItems(); ++i)
+                if (auto* f = dynamic_cast<FileTreeItem*> (item->getSubItem (i)))
+                    if (f->isOpen())
+                    {
+                        f->refresh();
+                        refreshAll (f);
+                    }
+        }
+
+        juce::String currentState()
+        {
+            if (auto xml = tree.getOpennessState (true))
+                return xml->toString (juce::XmlElement::TextFormat().singleLine());
+            return {};
+        }
+
+        void save()
+        {
+            const auto state = currentState();
+            if (state != savedState)
+            {
+                ctx.settings.setValue ("browser.files.tree", state);
+                savedState = state;
+            }
+        }
+
+        void timerCallback() override { save(); } // keep the stored state current (also on crash)
+
+        AppContext& ctx;
+        FileTreeRoot root;
+        juce::TreeView tree;
+        juce::TextButton refreshButton { "Aktualisieren" };
+        juce::Label hint;
+        juce::String savedState;
+    };
+
+    /** The "Dateien" tab: a folder tree view. */
+    class FileSource final : public BrowserSource
+    {
+    public:
+        juce::String getId() const override { return "files"; }
+        juce::String getTitle() const override { return "Dateien"; }
+        std::vector<BrowserItem> getItems() override { return {}; }
+        std::unique_ptr<juce::Component> createView (AppContext& ctx) override { return std::make_unique<FileTreeView> (ctx); }
     };
 
     //==========================================================================

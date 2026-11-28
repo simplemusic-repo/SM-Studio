@@ -14,7 +14,9 @@ add_library(sms_core STATIC
     Commands.cpp
     Selection.h
     ValueFormat.h
-    ValueFormat.cpp)
+    ValueFormat.cpp
+    RegionOps.h
+    RegionOps.cpp)
 
 target_include_directories(sms_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(sms_core PUBLIC sms_juce)

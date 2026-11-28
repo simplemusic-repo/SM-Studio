@@ -13,24 +13,33 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [x] Konsole mit großen Fadern, dB-Skala, Zahleneingabe für Lautstärke/Panorama
 - [x] Panels abkoppelbar (zweiter Bildschirm), Layout und Fensterpositionen werden gespeichert
 
-## Etappe 2 – Arrangement & Audio-Wiedergabe
-- [ ] Render-Snapshots für die Engine, Audio-Regionen abspielen (mit Lautstärke/Pan/Mute/Solo)
-- [ ] Wellenform-Darstellung (Peak-Cache)
-- [ ] Events auswählen, verschieben, kopieren, Länge ändern, teilen, löschen (Werkzeuge)
-- [ ] Spuren per Drag & Drop umsortieren, Spurhöhe ändern
-- [ ] Loop-Bereich
+## ✅ Etappe 2 – Arrangement & Audio-Wiedergabe
+- [x] Render-Snapshots für die Engine, Audio-Events abspielen (mit Lautstärke/Pan/Mute/Solo, Gain-Rampen, Abtastratenwandlung)
+- [x] Audio-Pool (Laden im Hintergrund), Wellenform-Darstellung (Peaks)
+- [x] Events auswählen, verschieben (auch spurübergreifend), kopieren, Länge ändern, teilen, löschen, stummschalten, duplizieren
+- [x] Werkzeuge Pfeil/Teilen/Radiergummi/Stift/Stumm, Auswahlrahmen
+- [x] Spuren per Drag & Drop umsortieren
+- [x] Loop-Bereich (Lineal, Transport, Tastatur)
+- [x] Kontextmenü für Events, Zusammenfügen (G), Ausschneiden/Kopieren/Einfügen
+- [x] Raster „Adaptiv“ (abhängig vom Zoom), Panels stufenlos vergrößerbar, Tooltips überall
+- [x] Datei-Browser als Ordnerbaum (Zustand wird gespeichert), Inserts in Konsole und Inspector
+- [x] Inspector als Kanalzug + Instrument-Bereich (Transponieren/Anschlag gespeichert; wirken ab MIDI-Wiedergabe)
+- [x] Werkzeuge im Rechtsklick-Menü
+- [ ] später: Spurhöhe ändern, Fades/Event-Lautstärke per Maus, Streaming langer Dateien von der Platte, bessere Resampling-Qualität
 
 ## Etappe 3 – Plug-ins
 - [ ] VST3-Hosting (Windows/macOS), AU (macOS), Plug-in-Scan in separatem Prozess
 - [ ] Browser zeigt echte Instrumente/Effekte nach Hersteller/Kategorie
 - [ ] Plug-in-Fenster öffnen, Inserts umsortieren/bypass, Latenzausgleich
-- [ ] Instrumentenspuren spielen MIDI → Instrument
+- [ ] Instrumentenspuren spielen MIDI → Instrument (inkl. Transponieren/Anschlag aus dem Inspector)
+- [ ] „Öffnen“ im Inspector öffnet das Instrument-Fenster
 
 ## Etappe 4 – Piano Roll
+- [ ] Arpeggiator und MIDI-Effekte im Inspector
 - [ ] Editor unten (F2), Noten zeichnen/verschieben/löschen, Velocity, Quantisieren
 
 ## Etappe 5 – Konsole
-- [ ] Busse, Sends, Ausgänge, Pegelanzeigen pro Kanal, Inserts in der Konsole
+- [ ] Busse, Sends, Ausgänge, Pegelanzeigen pro Kanal
 
 ## Etappe 6 – Automation
 - [ ] Automationsspuren für Mixer- und Plug-in-Parameter

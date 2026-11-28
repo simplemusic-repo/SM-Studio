@@ -152,6 +152,10 @@ public:
             h.perform (std::make_unique<SetTrackParam> (id, Param::pan, -7.0f));
             expectEquals (s.findTrack (id)->volumeDb, Track::maxVolumeDb);
             expectEquals (s.findTrack (id)->pan, -1.0f);
+            h.perform (std::make_unique<SetTrackParam> (id, Param::transpose, 60.0f));
+            h.perform (std::make_unique<SetTrackParam> (id, Param::velocityOffset, -12.4f));
+            expectEquals (s.findTrack (id)->transpose, 48);
+            expectEquals (s.findTrack (id)->velocityOffset, -12);
         }
 
         beginTest ("transactions form one undo step");
@@ -202,6 +206,12 @@ public:
             expectEquals ((int) s.findTrack (id)->inserts.size(), 1);
             h.undo();
             expectEquals (s.findTrack (id)->inserts[0].name, juce::String ("Comp"));
+
+            h.perform (std::make_unique<SetInsertBypass> (id, b.id, true));
+            expect (s.findTrack (id)->inserts[0].bypassed);
+            expect (! h.perform (std::make_unique<SetInsertBypass> (id, b.id, true)));
+            h.undo();
+            expect (! s.findTrack (id)->inserts[0].bypassed);
 
             h.perform (std::make_unique<SetInstrument> (id, "x:synth", "Synth"));
             expectEquals (s.findTrack (id)->instrumentName, juce::String ("Synth"));

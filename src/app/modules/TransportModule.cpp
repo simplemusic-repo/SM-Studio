@@ -64,6 +64,46 @@ namespace
             add ("transport.forward", "Einen Takt vor", 50, { juce::KeyPress (juce::KeyPress::rightKey), juce::KeyPress (juce::KeyPress::numberPadAdd) },
                  [jumpBars] { jumpBars (1); });
 
+            ActionInfo loop;
+            loop.id = "transport.loop";
+            loop.name = "Loop ein/aus";
+            loop.menu = "Transport";
+            loop.menuOrder = 70;
+            loop.separatorBefore = true;
+            loop.keys = { juce::KeyPress ('/'), juce::KeyPress (juce::KeyPress::numberPadDivide), juce::KeyPress ('l') };
+            loop.perform = [&ctx]
+            {
+                auto l = ctx.song.getLoop();
+                if (! l.isValid()) // no range yet: loop the first four bars
+                    l = { 0, ctx.song.getTempoMap().getTicksPerBar() * 4, false };
+                l.enabled = ! l.enabled;
+                ctx.song.setLoop (l);
+            };
+            loop.isTicked = [&ctx] { return ctx.song.getLoop().enabled; };
+            reg.addAction (std::move (loop));
+
+            ActionInfo loopSel;
+            loopSel.id = "transport.loopSelection";
+            loopSel.name = u8"Loop auf Auswahl setzen";
+            loopSel.menu = "Transport";
+            loopSel.menuOrder = 80;
+            loopSel.keys = { juce::KeyPress ('p') };
+            loopSel.isEnabled = [&ctx] { return ! ctx.selection.getSelectedRegions().empty(); };
+            loopSel.perform = [&ctx]
+            {
+                Tick first = -1, last = 0;
+                for (auto id : ctx.selection.getSelectedRegions())
+                    if (auto* t = ctx.song.findTrackOfRegion (id))
+                    {
+                        auto* r = t->findRegion (id);
+                        first = first < 0 ? r->position : std::min (first, r->position);
+                        last = std::max (last, r->getEnd());
+                    }
+                if (first >= 0 && last > first)
+                    ctx.song.setLoop ({ first, last, true });
+            };
+            reg.addAction (std::move (loopSel));
+
             ActionInfo metro;
             metro.id = "transport.metronome";
             metro.name = "Metronom";

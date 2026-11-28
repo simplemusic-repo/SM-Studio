@@ -130,6 +130,27 @@ void Song::setTimeSignature (TimeSignature sig)
     notify ({ SongChange::What::tempoChanged, {} });
 }
 
+void Song::setLoop (LoopRange l)
+{
+    if (l.end < l.start)
+        std::swap (l.start, l.end);
+    l.start = std::max<Tick> (0, l.start);
+
+    if (l == loop)
+        return;
+
+    loop = l;
+    notify ({ SongChange::What::loopChanged, {} });
+}
+
+const Track* Song::findTrackOfRegion (ObjectId regionId) const
+{
+    for (auto& t : tracks)
+        if (t.findRegion (regionId) != nullptr)
+            return &t;
+    return nullptr;
+}
+
 Tick Song::getSongEnd() const
 {
     Tick end = tempoMap.getTicksPerBar() * 8;
