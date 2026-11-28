@@ -2,6 +2,7 @@
 #pragma once
 
 #include "AudioEngine.h"
+#include "PluginHost.h"
 
 namespace sms
 {
@@ -13,7 +14,7 @@ class EngineSync final : private Song::Listener,
                          private juce::Timer
 {
 public:
-    EngineSync (Song&, AudioPool&, AudioEngine&);
+    EngineSync (Song&, AudioPool&, AudioEngine&, PluginHost* plugins = nullptr);
     ~EngineSync() override;
 
     /** Rebuilds and publishes immediately (also used by tests). */
@@ -28,8 +29,10 @@ private:
     Song& song;
     AudioPool& pool;
     AudioEngine& engine;
+    PluginHost* plugins;
     bool dirty = true;
     double builtForRate = 0.0;
+    int builtForBlock = 0;
 };
 
 } // namespace sms

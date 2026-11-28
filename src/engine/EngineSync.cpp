@@ -4,10 +4,12 @@
 namespace sms
 {
 
-EngineSync::EngineSync (Song& s, AudioPool& p, AudioEngine& e) : song (s), pool (p), engine (e)
+EngineSync::EngineSync (Song& s, AudioPool& p, AudioEngine& e, PluginHost* h) : song (s), pool (p), engine (e), plugins (h)
 {
     song.addListener (this);
     pool.addChangeListener (this);
+    if (plugins != nullptr)
+        plugins->addChangeListener (this);
     update();
     startTimerHz (30);
 }
@@ -16,13 +18,36 @@ EngineSync::~EngineSync()
 {
     song.removeListener (this);
     pool.removeChangeListener (this);
+    if (plugins != nullptr)
+        plugins->removeChangeListener (this);
 }
 
 void EngineSync::update()
 {
     syncTransport();
     builtForRate = engine.getSampleRate();
-    engine.publish (buildRenderSnapshot (song, pool, builtForRate));
+    builtForBlock = engine.getMaxBlockSize();
+
+    if (plugins != nullptr)
+        plugins->setPlaybackFormat (builtForRate, builtForBlock);
+
+    auto snap = buildRenderSnapshot (song, pool, builtForRate, plugins);
+
+    // plug-ins that were prepared for another rate/size and are not playing right now
+    auto check = [this] (const std::shared_ptr<juce::AudioProcessor>& p)
+    {
+        if (p != nullptr && (! juce::approximatelyEqual (p->getSampleRate(), builtForRate) || p->getBlockSize() != builtForBlock)
+            && ! engine.isProcessorInUse (p.get()))
+            PluginHost::prepare (*p, builtForRate, builtForBlock);
+    };
+    for (auto& t : snap->tracks)
+    {
+        check (t.instrument);
+        for (auto& i : t.inserts)
+            check (i);
+    }
+
+    engine.publish (std::move (snap));
     dirty = false;
 }
 
@@ -45,12 +70,12 @@ void EngineSync::songChanged (const SongChange& c)
 
 void EngineSync::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    dirty = true; // an audio file finished loading
+    dirty = true; // an audio file finished loading, or a plug-in instance is ready
 }
 
 void EngineSync::timerCallback()
 {
-    if (dirty || ! juce::approximatelyEqual (builtForRate, engine.getSampleRate()))
+    if (dirty || ! juce::approximatelyEqual (builtForRate, engine.getSampleRate()) || builtForBlock != engine.getMaxBlockSize())
         update();
     else
         engine.collectGarbage();

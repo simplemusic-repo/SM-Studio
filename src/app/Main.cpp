@@ -13,6 +13,7 @@
 #include "extension/ExtensionRegistry.h"
 #include "modules/Modules.h"
 #include "ui/MainComponent.h"
+#include "ui/PluginWindows.h"
 #include "ui/Theme.h"
 
 namespace sms
@@ -22,8 +23,19 @@ namespace sms
 struct AppState final
 {
     /** @param persistentSettings  false for screenshots/tests: settings stay in memory */
-    explicit AppState (bool persistentSettings) : settings (chooseSettings (persistentSettings))
+    explicit AppState (bool persistentSettings)
+        : settings (chooseSettings (persistentSettings)),
+          plugins (persistentSettings ? dataFolder() : juce::File())
     {
+    }
+
+    static juce::File dataFolder()
+    {
+       #if JUCE_LINUX || JUCE_BSD
+        return juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile (".config/SM Studio");
+       #else
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("SM Studio");
+       #endif
     }
 
     ~AppState()
@@ -59,10 +71,12 @@ struct AppState final
     Selection selection;
     AudioEngine engine;
     AudioPool pool { song };
-    EngineSync engineSync { song, pool, engine };
+    PluginHost plugins;
+    EngineSync engineSync { song, pool, engine, &plugins };
+    PluginWindows pluginWindows { plugins }; // destroyed before the plug-ins
     ExtensionRegistry registry;
     EditState edit;
-    AppContext ctx { song, history, selection, engine, pool, registry, edit, settings };
+    AppContext ctx { song, history, selection, engine, pool, plugins, pluginWindows, registry, edit, settings };
 };
 
 //==============================================================================
@@ -165,6 +179,10 @@ public:
             juce::Logger::writeToLog ("Audio initialisation failed: " + error);
 
         mainWindow = std::make_unique<MainWindow> (state->ctx);
+
+        // first start: look for installed plug-ins in the background
+        if (! AppState::dataFolder().getChildFile ("plugins.xml").existsAsFile())
+            state->plugins.startScan();
     }
 
     void shutdown() override
@@ -173,6 +191,7 @@ public:
 
         if (state != nullptr)
         {
+            state->pluginWindows.closeAll();
             state->engine.shutdownAudio();
             state->registry.shutdownModules();
         }

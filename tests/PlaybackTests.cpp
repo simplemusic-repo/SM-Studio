@@ -2,6 +2,7 @@
 #include "core/Commands.h"
 #include "core/RegionOps.h"
 #include "engine/EngineSync.h"
+#include "engine/PluginHost.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -206,6 +207,64 @@ public:
             auto out = f.render (0.0, 1.2);
             expectWithinAbsoluteError (out.getSample (0, 47000), 0.4f, 1e-3f);
             expect (out.getMagnitude (0, 48100, 1000) < 1e-6f, "ends after one second");
+        }
+
+        beginTest ("MIDI notes play through an instrument, transpose and note-off on stop");
+        {
+            Fixture f;
+            PluginHost host ({});
+            host.setPlaybackFormat (Fixture::sr, 512);
+
+            Track t;
+            t.id = f.song.newId();
+            t.typeId = "instrument";
+            t.instrumentPluginId = "builtin:testsynth";
+            const auto tid = t.id;
+            f.history.perform (std::make_unique<commands::AddTrack> (std::move (t)));
+
+            Region r;
+            r.id = f.song.newId();
+            r.kind = Region::Kind::midi;
+            r.position = 960;      // 0.5 s
+            r.length = 960 * 4;    // 2 s
+            r.notes.push_back ({ f.song.newId(), 0, 960, 69, 0.8f }); // 0.5 .. 1.0 s
+            f.history.perform (std::make_unique<commands::AddRegion> (tid, r));
+
+            f.engine.publish (buildRenderSnapshot (f.song, *f.pool, Fixture::sr, &host));
+            auto out = f.render (0.0, 1.6);
+            const auto at = [] (double sec) { return (int) (sec * Fixture::sr); };
+            expect (out.getMagnitude (0, 0, at (0.49)) < 1e-6f, "silence before the note");
+            expect (out.getMagnitude (0, at (0.6), at (0.3)) > 0.02f, "note is audible");
+            expect (out.getMagnitude (0, at (1.45), at (0.1)) < 1e-4f, "released after the note end");
+
+            // the note sounds an octave higher with transpose +12: count zero crossings
+            auto crossings = [] (const juce::AudioBuffer<float>& b, int from, int len)
+            {
+                int c = 0;
+                for (int i = from + 1; i < from + len; ++i)
+                    if ((b.getSample (0, i - 1) < 0.0f) != (b.getSample (0, i) < 0.0f))
+                        ++c;
+                return c;
+            };
+            const auto base = crossings (out, at (0.6), at (0.2));
+            f.history.perform (std::make_unique<commands::SetTrackParam> (tid, commands::SetTrackParam::Param::transpose, 12.0f));
+            f.engine.publish (buildRenderSnapshot (f.song, *f.pool, Fixture::sr, &host));
+            out = f.render (0.0, 1.0);
+            const auto higher = crossings (out, at (0.6), at (0.2));
+            expect (higher > base * 3 / 2, "transpose +12 raises the pitch (" + juce::String (base) + " -> " + juce::String (higher) + ")");
+
+            // stop in the middle of a note: the instrument gets a note-off and goes quiet
+            f.history.perform (std::make_unique<commands::SetTrackParam> (tid, commands::SetTrackParam::Param::transpose, 0.0f));
+            f.engine.publish (buildRenderSnapshot (f.song, *f.pool, Fixture::sr, &host));
+            f.render (0.4, 0.3);               // stops at 0.7 s while the note sounds
+            juce::AudioBuffer<float> tail (2, at (0.6));
+            float* chans[] = { tail.getWritePointer (0), tail.getWritePointer (1) };
+            for (int pos = 0; pos < tail.getNumSamples(); pos += 512)
+            {
+                float* c[] = { chans[0] + pos, chans[1] + pos };
+                f.engine.renderBlock (c, 2, std::min (512, tail.getNumSamples() - pos));
+            }
+            expect (tail.getMagnitude (0, at (0.45), at (0.1)) < 1e-4f, "note released after stop");
         }
 
         beginTest ("snapshots are freed when no longer used");

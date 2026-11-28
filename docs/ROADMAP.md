@@ -27,12 +27,16 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [x] Werkzeuge im Rechtsklick-Menü
 - [ ] später: Spurhöhe ändern, Fades/Event-Lautstärke per Maus, Streaming langer Dateien von der Platte, bessere Resampling-Qualität
 
-## Etappe 3 – Plug-ins
-- [ ] VST3-Hosting (Windows/macOS), AU (macOS), Plug-in-Scan in separatem Prozess
-- [ ] Browser zeigt echte Instrumente/Effekte nach Hersteller/Kategorie
-- [ ] Plug-in-Fenster öffnen, Inserts umsortieren/bypass, Latenzausgleich
-- [ ] Instrumentenspuren spielen MIDI → Instrument (inkl. Transponieren/Anschlag aus dem Inspector)
-- [ ] „Öffnen“ im Inspector öffnet das Instrument-Fenster
+## ✅ Etappe 3 – Plug-ins
+- [x] VST3-Hosting (Windows/macOS), Audio Units (macOS)
+- [x] Plug-in-Suche im Hintergrund, automatisch beim ersten Start, Absturzschutz (abstürzende Plug-ins werden übersprungen), gespeicherte Liste
+- [x] Browser zeigt Instrumente/Effekte nach Hersteller, Knopf „Plug-ins suchen“
+- [x] Instrumentenspuren spielen MIDI → Instrument (inkl. Transponieren/Anschlag), Note-Offs bei Stopp/Sprung/Loop
+- [x] Insert-Ketten mit Bypass, Plug-ins laufen auch im Stopp weiter (Hall-Fahnen)
+- [x] Plug-in-Fenster: „Öffnen“ im Inspector, Doppelklick / Menü auf einen Insert
+- [x] Eingebauter „SM Testsynth“ (funktioniert ohne Plug-ins, für Tests)
+- [ ] später: Plug-in-Suche in eigenem Prozess, Latenzausgleich (PDC), Plug-in-Zustand im Projekt speichern (mit Etappe 8),
+      Plug-in-Parameter-Automation (Etappe 6), Inserts per Drag & Drop umsortieren
 
 ## Etappe 4 – Piano Roll
 - [ ] Arpeggiator und MIDI-Effekte im Inspector

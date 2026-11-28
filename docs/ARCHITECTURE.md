@@ -64,6 +64,23 @@ aktualisieren sich selbst. `Selection` (nicht rückgängig machbar) meldet Auswa
 - `AudioEngine::renderBlock` ist die Echtzeit-Funktion; Tests rufen sie direkt offline auf
   (`tests/PlaybackTests.cpp`).
 
+### Plug-ins
+
+- **`PluginHost`** (engine): Liste der installierten Plug-ins (`KnownPluginList`, Scan im
+  Hintergrund-Thread mit „Dead-Man's-Pedal“-Datei, gespeichert in `plugins.xml` im
+  Einstellungsordner) und Instanzen je **Besitzer** (Spur-ID für das Instrument, Slot-ID für
+  Inserts). Instanzen entstehen asynchron; bis sie bereit sind, fehlen sie im Snapshot. Da sie
+  je Besitzer zwischengespeichert bleiben, stellt Undo/Redo dieselbe Instanz mit ihren
+  Einstellungen wieder her.
+- Im Snapshot hält jede Spur `shared_ptr` auf Instrument und aktive Inserts; freigegeben wird
+  nur auf dem Message-Thread (Hazard-Pointer, s. o.).
+- Der Audio-Thread rendert je Spur: Audio-Clips → Instrument (MIDI aus dem Snapshot,
+  Transponieren/Anschlag bereits eingerechnet) → Inserts → Lautstärke/Pan. Blöcke werden auf
+  die vorbereitete Blockgröße begrenzt; `prepareToPlay` nur, wenn der Audio-Thread das Plug-in
+  nicht benutzt (Geräte-Neustart bzw. `AudioEngine::isProcessorInUse`).
+- Eingebaute Instrumente (`builtin:…`, z. B. „SM Testsynth“) sind normale `AudioProcessor`.
+- **`PluginWindows`** (app) öffnet die Editoren; Fenster halten das Plug-in am Leben.
+
 ### UI-Regel: nichts löschen, was gerade ein Ereignis bearbeitet
 
 Wenn eine Komponente durch ihre eigene Aktion neu aufgebaut würde (z. B. Spurkopf

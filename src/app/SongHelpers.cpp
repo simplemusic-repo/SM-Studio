@@ -194,11 +194,7 @@ void createDemoSong (AppContext& ctx)
     auto voxId = vox.id;
     ctx.perform (std::make_unique<AddTrack> (std::move (vox)));
     ctx.perform (std::make_unique<AddRegion> (voxId, makeAudio ("Vocal Take 3", bar * 4, 8)));
-    InsertSlot eq;
-    eq.id = ctx.song.newId();
-    eq.name = "SM EQ";
-    eq.pluginId = "builtin:eq";
-    ctx.perform (std::make_unique<AddInsert> (voxId, eq));
+
 
     ctx.perform (std::make_unique<SetTrackParam> (voxId, SetTrackParam::Param::volumeDb, -3.5f));
     ctx.perform (std::make_unique<SetTrackParam> (keysId, SetTrackParam::Param::pan, -0.3f));

@@ -68,8 +68,10 @@ target_link_libraries(sms_juce
         juce::juce_recommended_warning_flags)
 target_compile_definitions(sms_juce PUBLIC
     JUCE_STANDALONE_APPLICATION=1
-    JUCE_PLUGINHOST_VST3=0
-    JUCE_PLUGINHOST_AU=0)
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=$<BOOL:${APPLE}>
+    JUCE_PLUGINHOST_LV2=0
+    JUCE_PLUGINHOST_LADSPA=0)
 target_include_directories(sms_juce INTERFACE
     $<TARGET_PROPERTY:sms_juce,INCLUDE_DIRECTORIES>)
 target_compile_definitions(sms_juce INTERFACE

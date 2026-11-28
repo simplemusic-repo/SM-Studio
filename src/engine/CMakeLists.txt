@@ -5,6 +5,10 @@ add_library(sms_engine STATIC
     AudioEngine.cpp
     AudioPool.h
     AudioPool.cpp
+    BuiltInInstruments.h
+    BuiltInInstruments.cpp
+    PluginHost.h
+    PluginHost.cpp
     EngineSync.h
     EngineSync.cpp
     Metronome.h

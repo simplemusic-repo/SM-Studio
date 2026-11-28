@@ -22,6 +22,7 @@
 #include "core/Selection.h"
 #include "engine/AudioEngine.h"
 #include "engine/AudioPool.h"
+#include "engine/PluginHost.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -33,6 +34,7 @@ namespace sms
 {
 
 class ExtensionRegistry;
+class PluginWindows;
 
 /** Editing state shared by toolbar, arrangement and editors. Not undoable. */
 struct EditState
@@ -88,6 +90,8 @@ struct AppContext
     Selection& selection;
     AudioEngine& engine;
     AudioPool& pool;
+    PluginHost& plugins;
+    PluginWindows& pluginWindows;
     ExtensionRegistry& registry;
     EditState& edit;
 

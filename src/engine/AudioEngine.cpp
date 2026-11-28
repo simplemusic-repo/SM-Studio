@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "AudioEngine.h"
 
+#include "PluginHost.h"
+
 #include <cmath>
 
 namespace sms
@@ -15,6 +17,8 @@ AudioEngine::AudioEngine()
 {
     lastGains.resize (maxTracks, { 0.0f, 0.0f });
     lastGainIds.resize (maxTracks);
+    activeNotes.resize (maxTracks);
+    midi.ensureSize (16384);
     prepareToPlay (44100.0, 512);
 }
 
@@ -51,12 +55,16 @@ void AudioEngine::prepareToPlay (double newSampleRate, int maxBlockSize)
     const auto seconds = getPositionSeconds();
     sampleRate.store (newSampleRate);
     setPositionSeconds (seconds);
-    scratch.setSize (2, std::max (maxBlockSize, 1024));
+    maxBlockSize = std::max (16, maxBlockSize);
+    maxBlock.store (maxBlockSize);
+    scratch.setSize (maxChannels, maxBlockSize);
     metronome.prepare (newSampleRate);
+    prepareSnapshotProcessors (newSampleRate, maxBlockSize);
 }
 
 void AudioEngine::setPositionSeconds (double seconds) noexcept
 {
+    notesOffPending.store (true); // a jump: stop sounding notes
     positionSamples.store ((std::int64_t) std::llround (std::max (0.0, seconds) * sampleRate.load()));
 }
 
@@ -110,6 +118,37 @@ void AudioEngine::collectGarbage()
                  owned.end());
 }
 
+void AudioEngine::prepareSnapshotProcessors (double sr, int blockSize)
+{
+    // called while no audio callback runs (device (re)start or before playback)
+    if (auto* snap = current.load())
+        for (auto& t : snap->tracks)
+        {
+            if (t.instrument != nullptr)
+                PluginHost::prepare (*t.instrument, sr, blockSize);
+            for (auto& p : t.inserts)
+                PluginHost::prepare (*p, sr, blockSize);
+        }
+}
+
+bool AudioEngine::isProcessorInUse (const juce::AudioProcessor* p) const
+{
+    for (auto* snap : { current.load(), inUse.load() })
+    {
+        if (snap == nullptr)
+            continue;
+        for (auto& t : snap->tracks)
+        {
+            if (t.instrument.get() == p)
+                return true;
+            for (auto& i : t.inserts)
+                if (i.get() == p)
+                    return true;
+        }
+    }
+    return false;
+}
+
 //==============================================================================
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
@@ -156,32 +195,35 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
         wasPlaying = isNowPlaying;
     }
 
-    if (isNowPlaying)
+    bool notesOff = notesOffPending.exchange (false);
+
+    const auto sr = sampleRate.load();
+    const auto startPos = positionSamples.load();
+    auto pos = startPos;
+
+    const bool looping = loopOn.load();
+    const auto loopStart = (std::int64_t) std::llround (loopStartSeconds.load() * sr);
+    const auto loopEnd = (std::int64_t) std::llround (loopEndSeconds.load() * sr);
+    const auto samplesPerBeat = sr * 60.0 / bpm.load() * 4.0 / (double) beatUnit.load();
+    int done = 0;
+
+    while (done < numSamples)
     {
-        const auto sr = sampleRate.load();
-        const auto startPos = positionSamples.load();
-        auto pos = startPos;
+        int n = std::min (numSamples - done, scratch.getNumSamples());
 
-        const bool looping = loopOn.load();
-        const auto loopStart = (std::int64_t) std::llround (loopStartSeconds.load() * sr);
-        const auto loopEnd = (std::int64_t) std::llround (loopEndSeconds.load() * sr);
+        if (isNowPlaying && looping && pos < loopEnd && pos + n > loopEnd)
+            n = (int) (loopEnd - pos);
 
-        const auto samplesPerBeat = sr * 60.0 / bpm.load() * 4.0 / (double) beatUnit.load();
-        int done = 0;
+        float* segL = left + done;
+        float* segR = right != nullptr ? right + done : nullptr;
 
-        while (done < numSamples)
+        // plug-ins run even when stopped (reverb tails, releasing notes)
+        if (snap != nullptr)
+            renderSegment (*snap, segL, segR, pos, n, isNowPlaying, notesOff);
+        notesOff = false;
+
+        if (isNowPlaying)
         {
-            int n = std::min (numSamples - done, scratch.getNumSamples());
-
-            if (looping && pos < loopEnd && pos + n > loopEnd)
-                n = (int) (loopEnd - pos);
-
-            float* segL = left + done;
-            float* segR = right != nullptr ? right + done : nullptr;
-
-            if (snap != nullptr)
-                renderSegment (*snap, segL, segR, pos, n);
-
             if (metronomeOn.load())
             {
                 float* chans[] = { segL, segR };
@@ -189,15 +231,20 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
             }
 
             pos += n;
-            done += n;
 
             if (looping && pos >= loopEnd)
             {
                 pos = loopStart;
                 metronome.reset();
+                notesOff = true;
             }
         }
 
+        done += n;
+    }
+
+    if (isNowPlaying)
+    {
         // only advance if nobody relocated the playhead during this block
         auto expected = startPos;
         positionSamples.compare_exchange_strong (expected, pos);
@@ -223,10 +270,42 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
     }
 }
 
-void AudioEngine::renderSegment (const RenderSnapshot& snap, float* outL, float* outR, std::int64_t start, int n) noexcept
+namespace
+{
+    int channelsFor (const juce::AudioProcessor& p, int maxChannels)
+    {
+        return juce::jlimit (2, maxChannels, std::max (p.getTotalNumInputChannels(), p.getTotalNumOutputChannels()));
+    }
+
+    void runProcessor (juce::AudioProcessor& p, float* const* chans, int maxChannels, int n, juce::MidiBuffer& midi) noexcept
+    {
+        const auto numCh = channelsFor (p, maxChannels);
+        juce::AudioBuffer<float> buffer (chans, numCh, n); // no allocation: refers to the scratch memory
+
+        const juce::ScopedLock sl (p.getCallbackLock());
+        if (p.isSuspended())
+        {
+            buffer.clear();
+            return;
+        }
+
+        p.processBlock (buffer, midi);
+
+        // mono plug-in output: duplicate to the right channel
+        if (p.getTotalNumOutputChannels() == 1)
+            juce::FloatVectorOperations::copy (chans[1], chans[0], n);
+    }
+}
+
+void AudioEngine::renderSegment (const RenderSnapshot& snap, float* outL, float* outR, std::int64_t start, int n,
+                                 bool isPlaying, bool sendNotesOff) noexcept
 {
     const auto end = start + n;
     const auto numTracks = std::min ((int) snap.tracks.size(), maxTracks);
+
+    float* chans[maxChannels];
+    for (int ch = 0; ch < maxChannels; ++ch)
+        chans[ch] = scratch.getWritePointer (ch);
 
     for (int ti = 0; ti < numTracks; ++ti)
     {
@@ -234,79 +313,120 @@ void AudioEngine::renderSegment (const RenderSnapshot& snap, float* outL, float*
 
         // gain ramp from the previous segment's gains (slot reset if another track is here now)
         auto& last = lastGains[(size_t) ti];
+        auto& notes = activeNotes[(size_t) ti];
         if (lastGainIds[(size_t) ti] != track.id)
         {
             lastGainIds[(size_t) ti] = track.id;
             last = { track.gainL, track.gainR };
+            notes.reset();
         }
 
         const auto targetL = track.gainL, targetR = track.gainR;
         const bool silent = juce::exactlyEqual (targetL, 0.0f) && juce::exactlyEqual (targetR, 0.0f)
                          && juce::exactlyEqual (last[0], 0.0f) && juce::exactlyEqual (last[1], 0.0f);
+        const bool hasProcessors = track.hasProcessors();
 
-        if (silent || track.clips.empty())
+        if (! hasProcessors && (silent || track.clips.empty() || ! isPlaying))
         {
             last = { targetL, targetR };
             continue;
         }
 
-        auto* bufL = scratch.getWritePointer (0);
-        auto* bufR = scratch.getWritePointer (1);
-        juce::FloatVectorOperations::clear (bufL, n);
-        juce::FloatVectorOperations::clear (bufR, n);
-        bool anything = false;
+        for (int ch = 0; ch < maxChannels; ++ch)
+            juce::FloatVectorOperations::clear (chans[ch], n);
 
-        for (auto& c : track.clips)
+        // --- audio clips ------------------------------------------------------
+        if (isPlaying)
         {
-            const auto clipEnd = c.start + c.length;
-            if (c.start >= end)
-                break; // sorted by start
-            if (clipEnd <= start)
-                continue;
-
-            const auto from = std::max (start, c.start);
-            const auto to = std::min (end, clipEnd);
-            const auto& buffer = c.audio->buffer;
-            const auto srcLen = buffer.getNumSamples();
-            const auto* srcL = buffer.getReadPointer (0);
-            const auto* srcR = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : srcL;
-            anything = true;
-
-            for (auto t = from; t < to; ++t)
+            for (auto& c : track.clips)
             {
-                const auto srcPos = c.sourceStart + (double) (t - c.start) * c.ratio;
-                const auto idx = (int) srcPos;
-                if (idx < 0 || idx >= srcLen)
+                const auto clipEnd = c.start + c.length;
+                if (c.start >= end)
+                    break; // sorted by start
+                if (clipEnd <= start)
                     continue;
 
-                const auto frac = (float) (srcPos - (double) idx);
-                const auto next = std::min (idx + 1, srcLen - 1);
+                const auto from = std::max (start, c.start);
+                const auto to = std::min (end, clipEnd);
+                const auto& buffer = c.audio->buffer;
+                const auto srcLen = buffer.getNumSamples();
+                const auto* srcL = buffer.getReadPointer (0);
+                const auto* srcR = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : srcL;
 
-                auto env = c.gain;
-                const auto fromStart = t - c.start, toEnd = clipEnd - t;
-                if (fromStart < fadeSamples) env *= (float) (fromStart + 1) / (float) fadeSamples;
-                if (toEnd < fadeSamples)     env *= (float) toEnd / (float) fadeSamples;
+                for (auto t = from; t < to; ++t)
+                {
+                    const auto srcPos = c.sourceStart + (double) (t - c.start) * c.ratio;
+                    const auto idx = (int) srcPos;
+                    if (idx < 0 || idx >= srcLen)
+                        continue;
 
-                const auto i = (int) (t - start);
-                bufL[i] += (srcL[idx] + (srcL[next] - srcL[idx]) * frac) * env;
-                bufR[i] += (srcR[idx] + (srcR[next] - srcR[idx]) * frac) * env;
+                    const auto frac = (float) (srcPos - (double) idx);
+                    const auto next = std::min (idx + 1, srcLen - 1);
+
+                    auto env = c.gain;
+                    const auto fromStart = t - c.start, toEnd = clipEnd - t;
+                    if (fromStart < fadeSamples) env *= (float) (fromStart + 1) / (float) fadeSamples;
+                    if (toEnd < fadeSamples)     env *= (float) toEnd / (float) fadeSamples;
+
+                    const auto i = (int) (t - start);
+                    chans[0][i] += (srcL[idx] + (srcL[next] - srcL[idx]) * frac) * env;
+                    chans[1][i] += (srcR[idx] + (srcR[next] - srcR[idx]) * frac) * env;
+                }
             }
         }
 
-        if (anything)
+        // --- instrument ---------------------------------------------------------
+        if (track.instrument != nullptr)
         {
-            const auto stepL = (targetL - last[0]) / (float) n;
-            const auto stepR = (targetR - last[1]) / (float) n;
-            auto gL = last[0], gR = last[1];
+            midi.clear();
 
-            for (int i = 0; i < n; ++i)
+            if (sendNotesOff)
             {
-                gL += stepL;
-                gR += stepR;
-                outL[i] += bufL[i] * gL;
-                if (outR != nullptr)
-                    outR[i] += bufR[i] * gR;
+                for (int note = 0; note < 128; ++note)
+                    if (notes.test ((size_t) note))
+                        midi.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+                notes.reset();
             }
+
+            if (isPlaying && ! track.midi.empty())
+            {
+                auto it = std::lower_bound (track.midi.begin(), track.midi.end(), start,
+                                            [] (const RenderSnapshot::MidiEvent& e, std::int64_t t) { return e.time < t; });
+
+                for (; it != track.midi.end() && it->time < end; ++it)
+                {
+                    const juce::uint8 bytes[] = { it->status, it->data1, it->data2 };
+                    midi.addEvent (bytes, 3, (int) (it->time - start));
+
+                    if (it->status == 0x90)
+                        notes.set (it->data1);
+                    else
+                        notes.reset (it->data1);
+                }
+            }
+
+            runProcessor (*track.instrument, chans, maxChannels, n, midi);
+        }
+
+        // --- insert effects -----------------------------------------------------
+        for (auto& p : track.inserts)
+        {
+            midi.clear();
+            runProcessor (*p, chans, maxChannels, n, midi);
+        }
+
+        // --- volume / pan -------------------------------------------------------
+        const auto stepL = (targetL - last[0]) / (float) n;
+        const auto stepR = (targetR - last[1]) / (float) n;
+        auto gL = last[0], gR = last[1];
+
+        for (int i = 0; i < n; ++i)
+        {
+            gL += stepL;
+            gR += stepR;
+            outL[i] += chans[0][i] * gL;
+            if (outR != nullptr)
+                outR[i] += chans[1][i] * gR;
         }
 
         last = { targetL, targetR };

@@ -8,6 +8,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include <atomic>
+#include <bitset>
 
 namespace sms
 {
@@ -38,11 +39,17 @@ public:
     /** For offline rendering / tests without a device. */
     void prepareToPlay (double sampleRate, int maxBlockSize);
 
+    /** Largest block passed to plug-ins (= device buffer size). */
+    int getMaxBlockSize() const noexcept { return maxBlock.load(); }
+
+    /** True if the audio thread may currently use this processor (message thread). */
+    bool isProcessorInUse (const juce::AudioProcessor*) const;
+
     //==========================================================================
     // Transport
     void play() noexcept { playing.store (true); }
-    void stop() noexcept { playing.store (false); }
-    void togglePlay() noexcept { playing.store (! playing.load()); }
+    void stop() noexcept { playing.store (false); notesOffPending.store (true); }
+    void togglePlay() noexcept { if (playing.load()) stop(); else play(); }
     bool isPlaying() const noexcept { return playing.load(); }
 
     void setPositionSeconds (double seconds) noexcept;
@@ -89,11 +96,14 @@ private:
     void audioDeviceAboutToStart (juce::AudioIODevice*) override;
     void audioDeviceStopped() override;
 
-    void renderSegment (const RenderSnapshot&, float* left, float* right, std::int64_t start, int n) noexcept;
+    void renderSegment (const RenderSnapshot&, float* left, float* right, std::int64_t start, int n,
+                        bool isPlaying, bool sendNotesOff) noexcept;
+    void prepareSnapshotProcessors (double sampleRate, int blockSize);
 
     juce::AudioDeviceManager deviceManager;
 
-    std::atomic<bool> playing { false }, metronomeOn { false }, loopOn { false };
+    std::atomic<bool> playing { false }, metronomeOn { false }, loopOn { false }, notesOffPending { false };
+    std::atomic<int> maxBlock { 512 };
     std::atomic<std::int64_t> positionSamples { 0 };
     std::atomic<double> loopStartSeconds { 0.0 }, loopEndSeconds { 0.0 };
     std::atomic<double> sampleRate { 44100.0 };
@@ -111,7 +121,10 @@ private:
     // audio thread state (preallocated)
     Metronome metronome;
     bool wasPlaying = false;
+    static constexpr int maxChannels = 8;
     juce::AudioBuffer<float> scratch;
+    juce::MidiBuffer midi;
+    std::vector<std::bitset<128>> activeNotes;
     std::vector<std::array<float, 2>> lastGains;
     std::vector<ObjectId> lastGainIds;
 

@@ -18,21 +18,47 @@ namespace sms
 
 namespace
 {
-    const juce::String placeholderCategory = "SM Studio (Platzhalter bis Plug-in-Hosting)";
-
-    class StaticSource final : public BrowserSource
+    /** Instruments or effects: built-in ones plus the scanned plug-ins, grouped by manufacturer. */
+    class PluginSource final : public BrowserSource,
+                               private juce::ChangeListener
     {
     public:
-        StaticSource (juce::String i, juce::String t, std::vector<BrowserItem> it)
-            : id (std::move (i)), title (std::move (t)), items (std::move (it)) {}
+        PluginSource (PluginHost& h, bool instrumentsOnly) : host (h), instruments (instrumentsOnly)
+        {
+            host.addChangeListener (this);
+        }
 
-        juce::String getId() const override { return id; }
-        juce::String getTitle() const override { return title; }
-        std::vector<BrowserItem> getItems() override { return items; }
+        ~PluginSource() override { host.removeChangeListener (this); }
+
+        juce::String getId() const override { return instruments ? "instruments" : "effects"; }
+        juce::String getTitle() const override { return instruments ? "Instrumente" : "Effekte"; }
+
+        std::vector<BrowserItem> getItems() override
+        {
+            std::vector<BrowserItem> items;
+            for (auto& e : host.getEntries())
+                if (e.isInstrument == instruments)
+                    items.push_back ({ instruments ? "instrument" : "effect", e.id, e.name,
+                                       e.manufacturer + (e.format.isNotEmpty() && e.format != "Eingebaut" ? " (" + e.format + ")" : juce::String()) });
+            return items;
+        }
+
+        juce::String getStatusText() override { return host.getStatusText(); }
+
+        std::vector<Button> getButtons() override
+        {
+            return { { "Plug-ins suchen", u8"Installierte VST3-Plug-ins (am Mac auch Audio Units) suchen", [this] { host.startScan(); } } };
+        }
 
     private:
-        juce::String id, title;
-        std::vector<BrowserItem> items;
+        void changeListenerCallback (juce::ChangeBroadcaster*) override
+        {
+            if (onItemsChanged)
+                onItemsChanged();
+        }
+
+        PluginHost& host;
+        bool instruments;
     };
 
     //==========================================================================
@@ -324,18 +350,8 @@ namespace
         {
             auto& reg = ctx.registry;
 
-            reg.addBrowserSource (std::make_shared<StaticSource> ("instruments", "Instrumente", std::vector<BrowserItem> {
-                { "instrument", "builtin:testsynth", "SM Testsynth", placeholderCategory },
-                { "instrument", "builtin:sampler", "SM Sampler", placeholderCategory },
-                { "instrument", "builtin:drums", "SM Drums", placeholderCategory },
-            }));
-
-            reg.addBrowserSource (std::make_shared<StaticSource> ("effects", "Effekte", std::vector<BrowserItem> {
-                { "effect", "builtin:eq", "SM EQ", placeholderCategory },
-                { "effect", "builtin:compressor", "SM Kompressor", placeholderCategory },
-                { "effect", "builtin:reverb", "SM Reverb", placeholderCategory },
-                { "effect", "builtin:delay", "SM Delay", placeholderCategory },
-            }));
+            reg.addBrowserSource (std::make_shared<PluginSource> (ctx.plugins, true));
+            reg.addBrowserSource (std::make_shared<PluginSource> (ctx.plugins, false));
 
             fileSource = std::make_shared<FileSource>();
             reg.addBrowserSource (fileSource);

@@ -30,7 +30,9 @@ target_sources(SMStudio PRIVATE
     ui/Panels.h
     ui/Panels.cpp
     ui/MainComponent.h
-    ui/MainComponent.cpp)
+    ui/MainComponent.cpp
+    ui/PluginWindows.h
+    ui/PluginWindows.cpp)
 
 target_include_directories(SMStudio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

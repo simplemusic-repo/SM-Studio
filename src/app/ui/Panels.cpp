@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "Panels.h"
 
+#include "PluginWindows.h"
 #include "SongHelpers.h"
 #include "core/Commands.h"
 #include "core/ValueFormat.h"
@@ -157,21 +158,38 @@ public:
         if (index < (int) t->inserts.size() && index < numSlots)
         {
             const auto slot = t->inserts[(size_t) index];
+            if (e.getNumberOfClicks() > 1)
+            {
+                openEditor (slot);
+                return;
+            }
+
             juce::PopupMenu m;
             m.addSectionHeader (slot.name);
+            const auto error = ctx.plugins.getInstanceError (slot.id);
+            if (error.isNotEmpty())
+                m.addItem (-1, error, false);
+            m.addItem (3, juce::String (u8"Öffnen …"), error.isEmpty());
             m.addItem (1, "Bypass", true, slot.bypassed);
             m.addItem (2, "Entfernen");
             m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                             [&c = ctx, track = trackId, slot] (int result)
+                             [this, &c = ctx, track = trackId, slot] (int result)
                              {
                                  if (result == 1) c.perform (std::make_unique<commands::SetInsertBypass> (track, slot.id, ! slot.bypassed));
-                                 if (result == 2) c.perform (std::make_unique<commands::RemoveInsert> (track, slot.id));
+                                 if (result == 2) { c.pluginWindows.close (slot.id); c.perform (std::make_unique<commands::RemoveInsert> (track, slot.id)); }
+                                 if (result == 3) openEditor (slot);
                              });
         }
         else
         {
             showAddMenu();
         }
+    }
+
+    void openEditor (const InsertSlot& slot)
+    {
+        auto* t = ctx.song.findTrack (trackId);
+        ctx.pluginWindows.open (slot.id, slot.pluginId, slot.name + (t != nullptr ? juce::String (u8" – ") + t->name : juce::String()));
     }
 
     void showAddMenu()
@@ -410,8 +428,15 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
     }
     instrumentLabel.setColour (juce::Label::textColourId, colours::text);
 
-    openButton.setTooltip (u8"Instrument öffnen (Plug-in-Fenster, ab Etappe 3)");
-    openButton.setEnabled (false);
+    openButton.setTooltip (u8"Instrument-Fenster öffnen");
+    openButton.onClick = [this]
+    {
+        if (auto* t = ctx.song.findTrack (shownTrack))
+            if (! ctx.pluginWindows.open (t->id, t->instrumentPluginId, t->instrumentName + juce::String (u8" – ") + t->name))
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, t->instrumentName,
+                    ctx.plugins.getInstanceError (t->id).isNotEmpty() ? ctx.plugins.getInstanceError (t->id)
+                                                                     : juce::String (u8"Das Instrument wird noch geladen."));
+    };
 
     auto setupStepper = [this] (juce::Slider& s, double lo, double hi, Param p, const juce::String& tip)
     {
@@ -426,8 +451,8 @@ InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
         };
         s.onDragEnd = [this] { ctx.history.endGesture(); };
     };
-    setupStepper (transpose, -48, 48, Param::transpose, u8"Transponieren in Halbtönen (wirkt ab der MIDI-Wiedergabe)");
-    setupStepper (velocity, -127, 127, Param::velocityOffset, u8"Anschlagstärke anheben/absenken (wirkt ab der MIDI-Wiedergabe)");
+    setupStepper (transpose, -48, 48, Param::transpose, u8"Transponieren in Halbtönen");
+    setupStepper (velocity, -127, 127, Param::velocityOffset, u8"Anschlagstärke anheben/absenken");
 
     arpButton.setTooltip (u8"Arpeggiator (folgt)");
     arpButton.setEnabled (false);
@@ -513,6 +538,7 @@ void InspectorPanel::refresh()
         typeLabel.setText ((type != nullptr ? type->displayName : t->typeId) + "spur", juce::dontSendNotification);
         instrumentLabel.setText (t->instrumentName.isNotEmpty() ? t->instrumentName : juce::String ("Kein Instrument"),
                                  juce::dontSendNotification);
+        openButton.setEnabled (t->instrumentPluginId.isNotEmpty());
 
         if (! transpose.isMouseButtonDown())
             transpose.setValue (t->transpose, juce::dontSendNotification);
