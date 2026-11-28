@@ -92,10 +92,10 @@ namespace
     };
 }
 
-void startPluginScanWithProgress (AppContext& ctx)
+void startPluginScanWithProgress (AppContext& ctx, bool full)
 {
     if (! ctx.plugins.isScanning())
-        ctx.plugins.startScan();
+        ctx.plugins.startScan (full);
 
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (new ScanProgress (ctx.plugins));

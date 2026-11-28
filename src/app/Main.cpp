@@ -19,6 +19,7 @@
 #include "ui/PluginScanDialog.h"
 #include "ui/PluginWindows.h"
 #include "ui/Theme.h"
+#include "engine/CrashInfo.h"
 
 namespace sms
 {
@@ -192,6 +193,51 @@ public:
         juce::LocalisedStrings::setCurrentMappings (t);
     }
 
+    //==========================================================================
+    // crash reports: if SM Studio crashes, crash.log (stack trace + the last
+    // things that happened) is written to the settings folder; on the next
+    // start the user is told where it is so it can be sent to the developers.
+    static juce::File crashLogFile() { return AppState::dataFolder().getChildFile ("crash.log"); }
+    static juce::File crashFlagFile() { return AppState::dataFolder().getChildFile ("crash.new"); }
+
+    static void crashHandler (void*)
+    {
+        juce::String report;
+        report << "SM Studio crash report\n"
+               << "Time: " << juce::Time::getCurrentTime().toString (true, true, true, true) << "\n"
+               << "Version: " << juce::JUCEApplication::getInstance()->getApplicationVersion() << "\n"
+               << "OS: " << juce::SystemStats::getOperatingSystemName() << "\n\n"
+               << "Last steps:\n" << crashinfo::recent().joinIntoString ("\n") << "\n\n"
+               << "Stack:\n" << juce::SystemStats::getStackBacktrace() << "\n";
+        AppState::dataFolder().createDirectory();
+        crashLogFile().replaceWithText (report);
+        crashFlagFile().create();
+        std::_Exit (1);
+    }
+
+    static void installCrashHandler() { juce::SystemStats::setApplicationCrashHandler (crashHandler); }
+
+    void showCrashReportFromLastRun()
+    {
+        if (! crashFlagFile().existsAsFile())
+            return;
+        crashFlagFile().deleteFile();
+
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                          .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                          .withTitle (juce::String (u8"SM Studio wurde unerwartet beendet"))
+                                          .withMessage (juce::String (u8"Beim letzten Mal ist SM Studio abgestürzt. Ein Bericht liegt hier:\n\n")
+                                                        + crashLogFile().getFullPathName()
+                                                        + juce::String (u8"\n\nSchick diese Datei bitte an die Entwickler – sie zeigt, wo der Fehler passiert ist."))
+                                          .withButton (juce::String (u8"Ordner öffnen"), 1)
+                                          .withButton ("OK", 0),
+                                      [] (int result)
+                                      {
+                                          if (result == 1)
+                                              crashLogFile().revealToUser();
+                                      });
+    }
+
     void initialise (const juce::String& commandLine) override
     {
         // plug-in scanner child process: check one plug-in and quit (no window)
@@ -213,6 +259,7 @@ public:
 
         installTranslations();
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
+        installCrashHandler();
 
         const auto args = juce::StringArray::fromTokens (commandLine, true);
         auto argValue = [&args] (const juce::String& name)
@@ -251,6 +298,11 @@ public:
             if (mainWindow != nullptr)
                 mainWindow->rebuildContent();
         };
+
+        showCrashReportFromLastRun();
+
+        if (args.contains ("--crash-test")) // tests the crash report
+            juce::MessageManager::callAsync ([] { crashinfo::note ("crash test"); volatile int* p = nullptr; *p = 1; });
 
         // first start: look for installed plug-ins in the background
         if (! AppState::dataFolder().getChildFile ("plugins.xml").existsAsFile())

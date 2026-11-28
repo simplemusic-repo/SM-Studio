@@ -2,7 +2,11 @@
 #include "core/Commands.h"
 #include "core/RegionOps.h"
 #include "engine/EngineSync.h"
+#include "engine/Metronome.h"
 #include "engine/PluginHost.h"
+
+#include <cmath>
+#include <thread>
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -300,6 +304,125 @@ public:
             out = f.render (0.0, 0.2, 1024);
             expect (out.getMagnitude (0, out.getNumSamples()) > 0.01f, "plays again after rebuilding");
             f.engine.prepareToPlay (Fixture::sr, 512);
+        }
+
+        beginTest ("stress: many device changes while an audio thread plays an instrument");
+        {
+            Fixture f;
+            PluginHost host ({});
+            Track t;
+            t.id = f.song.newId();
+            t.typeId = "instrument";
+            t.instrumentPluginId = "builtin:testsynth";
+            const auto tid = t.id;
+            f.history.perform (std::make_unique<commands::AddTrack> (std::move (t)));
+            Region r;
+            r.id = f.song.newId();
+            r.kind = Region::Kind::midi;
+            r.length = 960 * 64;
+            for (int i = 0; i < 64; ++i)
+                r.notes.push_back ({ f.song.newId(), 480 * i, 400, 48 + (i % 24), 0.8f });
+            f.history.perform (std::make_unique<commands::AddRegion> (tid, r));
+            f.engine.setLiveMidiTrack (tid);
+
+            EngineSync sync (f.song, *f.pool, f.engine, &host);
+            f.engine.play();
+
+            juce::Random rng (1234);
+            std::atomic<bool> bad { false };
+            const double rates[] = { 44100.0, 48000.0, 88200.0, 96000.0 };
+            const int blocks[] = { 32, 64, 128, 256, 441, 480, 512, 1024, 2048 };
+
+            for (int change = 0; change < 40; ++change)
+            {
+                // the driver stops the callback, restarts with a new format
+                const auto rate = rates[rng.nextInt (4)];
+                const auto block = blocks[rng.nextInt (9)];
+                f.engine.prepareToPlay (rate, block);
+
+                std::atomic<bool> run { true };
+                std::thread audio ([&]
+                {
+                    juce::AudioBuffer<float> buf (2, block);
+                    while (run.load())
+                    {
+                        f.engine.renderBlock (buf.getArrayOfWritePointers(), 2, block);
+                        for (int ch = 0; ch < 2; ++ch)
+                            for (int i = 0; i < block; ++i)
+                                if (! std::isfinite (buf.getSample (ch, i)) || std::abs (buf.getSample (ch, i)) > 4.0f)
+                                    bad = true;
+                    }
+                });
+
+                for (int tick = 0; tick < 6; ++tick)
+                {
+                    sync.update();                                       // EngineSync on the message thread
+                    f.engine.addLiveMidi (juce::MidiMessage::noteOn (1, 60 + tick, 0.7f));
+                    std::this_thread::sleep_for (std::chrono::milliseconds (3));
+                    f.engine.collectGarbage();
+                }
+
+                run = false;
+                audio.join();
+            }
+
+            f.engine.stop();
+            expect (! bad.load(), "no garbage samples after device changes");
+            f.engine.prepareToPlay (Fixture::sr, 512);
+        }
+
+        beginTest ("count-in: the playhead waits one bar while the metronome clicks");
+        {
+            Fixture f;
+            f.publish();
+            AudioEngine::MetronomeOptions o;
+            o.countInOnPlay = true;
+            o.countInBars = 1;
+            f.engine.setMetronomeOptions (o);
+            f.engine.setMetronomeEnabled (false); // count-in clicks even with the metronome off
+
+            // 120 bpm, 4/4: one bar = 2 s
+            auto out = f.render (0.0, 1.0);
+            expect (out.getMagnitude (0, out.getNumSamples()) > 0.05f, "count-in clicks are audible");
+            expectEquals ((int) f.engine.getPositionSamples(), 0, "playhead has not moved during the count-in");
+
+            f.engine.setPositionSeconds (0.0);
+            f.engine.play();
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int i = 0; i < (int) (2.5 * Fixture::sr) / 512; ++i)
+                f.engine.renderBlock (buf.getArrayOfWritePointers(), 2, 512);
+            f.engine.stop();
+            const auto secs = f.engine.getPositionSeconds();
+            expect (secs > 0.45 && secs < 0.55, "after the bar of count-in the song plays (" + juce::String (secs) + " s)");
+
+            o.countInOnPlay = false;
+            f.engine.setMetronomeOptions (o);
+            f.render (0.0, 0.5);
+            expect (f.engine.getPositionSeconds() > 0.45, "no count-in when switched off");
+        }
+
+        beginTest ("metronome sounds and volume");
+        {
+            for (int sound = 0; sound < Metronome::numSounds; ++sound)
+            {
+                Metronome m;
+                m.prepare (48000.0);
+                m.setSound (sound);
+                juce::AudioBuffer<float> b (1, 4800);
+                b.clear();
+                float* ch[] = { b.getWritePointer (0) };
+                m.process (ch, 1, 4800, 0, 24000.0, 4, 1.0f);
+                const auto loud = b.getMagnitude (0, 0, 4800);
+                expect (loud > 0.05f && loud < 1.0f, juce::String (Metronome::getSoundName (sound)) + " audible, not clipping");
+
+                Metronome q;
+                q.prepare (48000.0);
+                q.setSound (sound);
+                b.clear();
+                ch[0] = b.getWritePointer (0); // (clears the buffer's "is clear" flag)
+                q.process (ch, 1, 4800, 0, 24000.0, 4, 0.25f);
+                expectWithinAbsoluteError (b.getMagnitude (0, 0, 4800), loud * 0.25f, 1e-4f);
+            }
         }
 
         beginTest ("snapshots are freed when no longer used");

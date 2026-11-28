@@ -8,6 +8,7 @@ add_library(sms_engine STATIC
     BuiltInInstruments.h
     BuiltInInstruments.cpp
     PluginHost.h
+    CrashInfo.h
     PluginHost.cpp
     EngineSync.h
     EngineSync.cpp

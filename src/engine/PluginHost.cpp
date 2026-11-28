@@ -2,6 +2,7 @@
 #include "PluginHost.h"
 
 #include "BuiltInInstruments.h"
+#include "CrashInfo.h"
 
 namespace sms
 {
@@ -115,10 +116,13 @@ void PluginHost::saveList()
         xml->writeTo (dataFolder.getChildFile ("plugins.xml"));
 }
 
-void PluginHost::startScan()
+void PluginHost::startScan (bool full)
 {
     if (! isThreadRunning())
+    {
+        fullScan = full;
         startThread (juce::Thread::Priority::low);
+    }
     triggerAsyncUpdate();
 }
 
@@ -218,9 +222,14 @@ void PluginHost::run()
     const auto testDelayMs = juce::SystemStats::getEnvironmentVariable ("SMS_TEST_SCAN_DELAY_MS", "0").getIntValue();
     const auto executable = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
 
-    // 1) collect plug-in files of all formats that are new or changed
+    const bool full = fullScan.load();
+    if (full)
+        known.clearBlacklistedFiles();
+
+    // 1) collect plug-in files of all formats that are new or changed (full: all)
     struct Job { juce::AudioPluginFormat* format; juce::String file; };
     std::vector<Job> jobs;
+    juce::StringArray installed;
 
     for (auto* format : formats.getFormats())
     {
@@ -234,9 +243,18 @@ void PluginHost::run()
         triggerAsyncUpdate();
 
         for (auto& file : format->searchPathsForPlugins (format->getDefaultLocationsToSearch(), true, false))
-            if (! known.getBlacklistedFiles().contains (file) && ! known.isListingUpToDate (file, *format))
+        {
+            installed.add (file);
+            if (full || (! known.getBlacklistedFiles().contains (file) && ! known.isListingUpToDate (file, *format)))
                 jobs.push_back ({ format, file });
+        }
     }
+
+    // plug-ins that are no longer installed disappear from the list
+    if (! threadShouldExit())
+        for (auto& t : known.getTypes())
+            if (! installed.contains (t.fileOrIdentifier))
+                known.removeType (t);
 
     // 2) check each one in its own process (a crash or hang cannot take SM Studio down)
     for (size_t i = 0; i < jobs.size() && ! threadShouldExit(); ++i)
@@ -247,6 +265,11 @@ void PluginHost::run()
         }
         scanProgress = (float) i / (float) jobs.size();
         triggerAsyncUpdate();
+
+        if (full) // forget what was known about this file: check it from scratch
+            for (auto& t : known.getTypes())
+                if (t.fileOrIdentifier == jobs[i].file)
+                    known.removeType (t);
 
         if (! scanFileInChildProcess (executable, *jobs[i].format, jobs[i].file))
         {
@@ -322,12 +345,40 @@ juce::String PluginHost::getName (const juce::String& pluginId) const
 }
 
 //==============================================================================
+void PluginHost::configureBuses (juce::AudioProcessor& p)
+{
+    // Only the main bus is used: stereo in (effects) / stereo out. Extra outputs
+    // (e.g. Kontakt's 16 stereo outs) and side-chain inputs stay disabled - they
+    // would cost CPU and need more channels than a track has.
+    using CS = juce::AudioChannelSet;
+    const auto current = p.getBusesLayout();
+
+    auto make = [&] (CS mainIn, CS mainOut)
+    {
+        auto l = current;
+        for (int i = 0; i < l.inputBuses.size(); ++i)
+            l.inputBuses.getReference (i) = i == 0 ? mainIn : CS::disabled();
+        for (int i = 0; i < l.outputBuses.size(); ++i)
+            l.outputBuses.getReference (i) = i == 0 ? mainOut : CS::disabled();
+        return l;
+    };
+
+    const juce::AudioProcessor::BusesLayout candidates[] = {
+        make (CS::stereo(), CS::stereo()),
+        make (CS::disabled(), CS::stereo()),
+        make (CS::mono(), CS::stereo()),
+        make (CS::mono(), CS::mono()),
+        make (CS::disabled(), CS::mono()),
+        make (current.getMainInputChannelSet(), current.getMainOutputChannelSet()),
+    };
+
+    for (auto& l : candidates)
+        if (p.checkBusesLayoutSupported (l) && p.setBusesLayout (l))
+            return;
+}
+
 void PluginHost::prepare (juce::AudioProcessor& p, double sampleRate, int blockSize)
 {
-    // ask for stereo in/out where the plug-in allows it
-    if (auto* inst = dynamic_cast<juce::AudioPluginInstance*> (&p))
-        inst->enableAllBuses();
-
     p.setRateAndBufferSizeDetails (sampleRate, blockSize);
     p.prepareToPlay (sampleRate, blockSize);
 }
@@ -371,6 +422,7 @@ std::shared_ptr<juce::AudioProcessor> PluginHost::getInstance (ObjectId owner, c
     }
 
     inst.pending = true;
+    crashinfo::note ("loading plug-in " + desc->name + " (" + desc->pluginFormatName + ", " + desc->fileOrIdentifier + ")");
     formats.createPluginInstanceAsync (*desc, currentRate, currentBlock,
         [this, owner, generation, weak = std::weak_ptr<bool> (alive)] (std::unique_ptr<juce::AudioPluginInstance> created,
                                                                      const juce::String& error)
@@ -387,7 +439,12 @@ std::shared_ptr<juce::AudioProcessor> PluginHost::getInstance (ObjectId owner, c
 
             if (created != nullptr)
             {
+                crashinfo::note ("plug-in created: " + created->getName() + ", configuring buses");
+                configureBuses (*created);
+                crashinfo::note ("preparing " + created->getName() + " at " + juce::String (currentRate) + " Hz / " + juce::String (currentBlock));
                 prepare (*created, currentRate, currentBlock);
+                crashinfo::note (created->getName() + " ready (in " + juce::String (created->getTotalNumInputChannels())
+                                 + " / out " + juce::String (created->getTotalNumOutputChannels()) + " channels)");
                 entry.processor = std::shared_ptr<juce::AudioProcessor> (std::move (created));
             }
             else

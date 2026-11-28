@@ -19,14 +19,11 @@ juce::StringArray schemeNames()
     return { "Studio Dunkel", "Graphit", "Mitternacht", "Hell" };
 }
 
-void applyScheme (int index)
-{
-    using namespace colours;
-    struct Scheme { juce::uint32 window, panel, panelDark, panelLight, header, headerLight, border, separator,
+struct Scheme { juce::uint32 window, panel, panelDark, panelLight, header, headerLight, border, separator,
                     laneA, laneB, laneSelected, gridBar, gridBeat, text, textDim, textDark, accent, accentDim,
                     playhead, lcd, lcdText; };
 
-    static const Scheme schemes[] = {
+static const Scheme schemes[] = {
         // Studio Dunkel (default)
         { 0xff1b1c1f, 0xff2a2c31, 0xff222428, 0xff34373d, 0xff3b3f46, 0xff474b53, 0xff111214, 0xff3f434a,
           0xff26282c, 0xff232529, 0xff2f3540, 0xff3a3e45, 0xff2e3136, 0xffd9dce1, 0xff8d929b, 0xff1a1b1e,
@@ -45,6 +42,16 @@ void applyScheme (int index)
           0xff2f7fe0, 0xff9fc4f0, 0xff20242a, 0xff1b1f25, 0xff9fd2ff },
     };
 
+
+SchemePreview schemePreview (int index)
+{
+    const auto& sc = schemes[(size_t) juce::jlimit (0, (int) std::size (schemes) - 1, index)];
+    return { juce::Colour (sc.window), juce::Colour (sc.panel), juce::Colour (sc.header), juce::Colour (sc.accent), juce::Colour (sc.text) };
+}
+
+void applyScheme (int index)
+{
+    using namespace colours;
     const auto& sc = schemes[(size_t) juce::jlimit (0, (int) std::size (schemes) - 1, index)];
     window = juce::Colour (sc.window);       panel = juce::Colour (sc.panel);
     panelDark = juce::Colour (sc.panelDark); panelLight = juce::Colour (sc.panelLight);

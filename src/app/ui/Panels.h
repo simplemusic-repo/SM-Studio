@@ -81,7 +81,16 @@ private:
     juce::TextEditor search;
     juce::ListBox list { "browser", this };
     juce::Label hint, status;
-    juce::OwnedArray<juce::TextButton> sourceButtons, sortButtons;
+    juce::OwnedArray<juce::TextButton> sourceButtons;
+
+    /** "Hersteller | Art | Favoriten" as tabs. */
+    struct SortTabs final : public juce::TabbedButtonBar
+    {
+        SortTabs() : juce::TabbedButtonBar (juce::TabbedButtonBar::TabsAtTop) {}
+        std::function<void (int)> onChange;
+        void currentTabChanged (int index, const juce::String&) override { if (onChange) onChange (index); }
+    };
+    SortTabs sortTabs;
     std::map<int, std::unique_ptr<juce::Component>> customViews; // per tab, created on first use
     juce::Component* activeView = nullptr;
     int currentTab = 0;

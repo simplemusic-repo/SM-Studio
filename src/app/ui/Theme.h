@@ -41,6 +41,10 @@ namespace colours
 juce::StringArray schemeNames();
 void applyScheme (int index);
 
+/** A few colours of a scheme, for preview tiles in the settings. */
+struct SchemePreview { juce::Colour window, panel, header, accent, text; };
+SchemePreview schemePreview (int index);
+
 /** Colours offered for new tracks (cycled). */
 juce::Colour trackColour (int index);
 

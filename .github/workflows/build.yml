@@ -67,6 +67,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "build/src/app/SMStudio_artefacts/Release/SM Studio.exe" dist/
+          # debug symbols: crash reports (crash.log) then show function names
+          Get-ChildItem -Recurse build/src/app -Filter "SM Studio.pdb" | Select-Object -First 1 | Copy-Item -Destination dist/
           Copy-Item LICENSE.md dist/
           Copy-Item README.md dist/
 

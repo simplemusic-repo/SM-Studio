@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "AudioEngine.h"
 
+#include "CrashInfo.h"
 #include "PluginHost.h"
 
 #include <cmath>
@@ -54,7 +55,15 @@ void AudioEngine::addLiveMidi (const juce::MidiMessage& m)
 
 void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
 {
-    if (m.isNoteOnOrOff() || m.isController() || m.isPitchWheel() || m.isAftertouch() || m.isChannelPressure())
+    const auto mask = midiThruMask.load();
+    const bool pass = (m.isNoteOnOrOff()     && (mask & filterNotes))
+                   || (m.isAftertouch()      && (mask & filterPolyPressure))
+                   || (m.isController()      && (mask & filterControllers))
+                   || (m.isProgramChange()   && (mask & filterProgramChange))
+                   || (m.isChannelPressure() && (mask & filterAftertouch))
+                   || (m.isPitchWheel()      && (mask & filterPitchbend));
+    // SysEx is not forwarded live (MidiMessageCollector is not real-time safe for big messages)
+    if (pass)
         addLiveMidi (m);
 }
 
@@ -113,6 +122,17 @@ void AudioEngine::setLoop (double start, double end, bool enabled) noexcept
     loopOn.store (enabled && end > start + 0.01);
 }
 
+void AudioEngine::setMetronomeOptions (const MetronomeOptions& o) noexcept
+{
+    metroSound.store (o.sound);
+    metroGain.store (juce::Decibels::decibelsToGain (o.volumeDb, -60.0f));
+    metroAccent.store (o.accent);
+    metroOnPlay.store (o.clickOnPlay);
+    countInBars.store (juce::jlimit (0, 8, o.countInBars));
+    countInOnPlay.store (o.countInOnPlay);
+    // clickOnRecord / countInOnRecord: used by recording (stage 7)
+}
+
 void AudioEngine::setMasterGainDb (float db) noexcept
 {
     masterGain.store (juce::Decibels::decibelsToGain (db));
@@ -165,12 +185,15 @@ bool AudioEngine::isProcessorInUse (const juce::AudioProcessor* p) const
 //==============================================================================
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
+    crashinfo::note ("audio device started: " + device->getTypeName() + " / " + device->getName() + ", "
+                     + juce::String (device->getCurrentSampleRate()) + " Hz, " + juce::String (device->getCurrentBufferSizeSamples()) + " samples");
     bufferSize.store (device->getCurrentBufferSizeSamples());
     prepareToPlay (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
 }
 
 void AudioEngine::audioDeviceStopped()
 {
+    crashinfo::note ("audio device stopped");
     bufferSize.store (0);
 }
 
@@ -183,6 +206,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int,
 
 void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
 {
+    const juce::ScopedNoDenormals noDenormals; // denormal numbers can cost a lot of CPU
+
     for (int ch = 0; ch < numOutputs; ++ch)
         if (outputs[ch] != nullptr)
             juce::FloatVectorOperations::clear (outputs[ch], numSamples);
@@ -207,11 +232,26 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
         snap = nullptr;
 
     const bool isNowPlaying = playing.load();
-    if (isNowPlaying != wasPlaying)
+    metronome.setSound (metroSound.load());
+    const auto clickGain = metroGain.load();
+    const auto samplesPerBeat = sampleRate.load() * 60.0 / bpm.load() * 4.0 / (double) beatUnit.load();
+
+    const auto generation = playGeneration.load();
+    if (isNowPlaying != wasPlaying || (isNowPlaying && generation != seenPlayGeneration))
     {
         metronome.reset();
         wasPlaying = isNowPlaying;
+        seenPlayGeneration = generation;
+        countInLeft = 0;
+        countInPos = 0;
+
+        // count-in: the playhead waits N bars while the click counts
+        if (isNowPlaying && countInOnPlay.load() && countInBars.load() > 0)
+            countInLeft = (std::int64_t) std::llround (samplesPerBeat * beatsPerBar.load() * countInBars.load());
     }
+
+    if (previewPending.exchange (false))
+        metronome.trigger (true);
 
     bool notesOff = notesOffPending.exchange (false);
 
@@ -225,12 +265,32 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
     const bool looping = loopOn.load();
     const auto loopStart = (std::int64_t) std::llround (loopStartSeconds.load() * sr);
     const auto loopEnd = (std::int64_t) std::llround (loopEndSeconds.load() * sr);
-    const auto samplesPerBeat = sr * 60.0 / bpm.load() * 4.0 / (double) beatUnit.load();
     int done = 0;
 
     while (done < numSamples)
     {
         int n = std::min (numSamples - done, scratch.getNumSamples());
+
+        if (isNowPlaying && countInLeft > 0)
+        {
+            // count-in: clicks only (always audible), song does not move; plug-ins keep running
+            n = (int) std::min<std::int64_t> (n, countInLeft);
+            float* segL = left + done;
+            float* segR = right != nullptr ? right + done : nullptr;
+            if (snap != nullptr)
+                renderSegment (*snap, segL, segR, pos, n, false, notesOff, done);
+            notesOff = false;
+
+            float* chans[] = { segL, segR };
+            metronome.process (chans, segR != nullptr ? 2 : 1, n, countInPos, samplesPerBeat, beatsPerBar.load(),
+                               clickGain, metroAccent.load());
+            countInPos += n;
+            countInLeft -= n;
+            if (countInLeft == 0)
+                metronome.reset();
+            done += n;
+            continue;
+        }
 
         if (isNowPlaying && looping && pos < loopEnd && pos + n > loopEnd)
             n = (int) (loopEnd - pos);
@@ -245,10 +305,11 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
 
         if (isNowPlaying)
         {
-            if (metronomeOn.load())
+            if (metronomeOn.load() && metroOnPlay.load())
             {
                 float* chans[] = { segL, segR };
-                metronome.process (chans, segR != nullptr ? 2 : 1, n, pos, samplesPerBeat, beatsPerBar.load(), 1.0f);
+                metronome.process (chans, segR != nullptr ? 2 : 1, n, pos, samplesPerBeat, beatsPerBar.load(),
+                                   clickGain, metroAccent.load());
             }
 
             pos += n;
@@ -261,8 +322,16 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
             }
         }
 
+        else
+        {
+            float* chans[] = { segL, segR };
+            metronome.renderTail (chans, segR != nullptr ? 2 : 1, n, clickGain); // preview click
+        }
+
         done += n;
     }
+
+    countingIn.store (isNowPlaying && countInLeft > 0);
 
     if (isNowPlaying)
     {
@@ -293,27 +362,29 @@ void AudioEngine::renderBlock (float* const* outputs, int numOutputs, int numSam
 
 namespace
 {
-    int channelsFor (const juce::AudioProcessor& p, int maxChannels)
-    {
-        return juce::jlimit (2, maxChannels, std::max (p.getTotalNumInputChannels(), p.getTotalNumOutputChannels()));
-    }
-
     void runProcessor (juce::AudioProcessor& p, float* const* chans, int maxChannels, int n, juce::MidiBuffer& midi) noexcept
     {
-        const auto numCh = channelsFor (p, maxChannels);
-        juce::AudioBuffer<float> buffer (chans, numCh, n); // no allocation: refers to the scratch memory
-
         const juce::ScopedLock sl (p.getCallbackLock());
-        if (p.isSuspended())
+
+        // the buffer must have as many channels as the plug-in uses (never fewer:
+        // the plug-in would write past the end of it)
+        const auto needed = std::max (p.getTotalNumInputChannels(), p.getTotalNumOutputChannels());
+        if (p.isSuspended() || needed > maxChannels)
         {
-            buffer.clear();
+            for (int ch = 0; ch < 2; ++ch)
+                juce::FloatVectorOperations::clear (chans[ch], n);
             return;
         }
+
+        for (int ch = 2; ch < needed; ++ch) // extra channels start silent
+            juce::FloatVectorOperations::clear (chans[ch], n);
+
+        juce::AudioBuffer<float> buffer (chans, std::max (2, needed), n); // no allocation: refers to the scratch memory
 
         p.processBlock (buffer, midi);
 
         // mono plug-in output: duplicate to the right channel
-        if (p.getTotalNumOutputChannels() == 1)
+        if (p.getMainBusNumOutputChannels() == 1)
             juce::FloatVectorOperations::copy (chans[1], chans[0], n);
     }
 }
@@ -354,7 +425,7 @@ void AudioEngine::renderSegment (const RenderSnapshot& snap, float* outL, float*
             continue;
         }
 
-        for (int ch = 0; ch < maxChannels; ++ch)
+        for (int ch = 0; ch < 2; ++ch)
             juce::FloatVectorOperations::clear (chans[ch], n);
 
         // --- audio clips ------------------------------------------------------

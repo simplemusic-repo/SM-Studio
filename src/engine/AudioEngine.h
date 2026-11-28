@@ -63,7 +63,7 @@ public:
 
     //==========================================================================
     // Transport
-    void play() noexcept { playing.store (true); }
+    void play() noexcept { playGeneration.fetch_add (1); playing.store (true); }
     void stop() noexcept { playing.store (false); notesOffPending.store (true); }
     void togglePlay() noexcept { if (playing.load()) stop(); else play(); }
     bool isPlaying() const noexcept { return playing.load(); }
@@ -79,6 +79,36 @@ public:
 
     void setMetronomeEnabled (bool b) noexcept { metronomeOn.store (b); }
     bool isMetronomeEnabled() const noexcept { return metronomeOn.load(); }
+
+    /** Metronome options (Einstellungen → Metronom). */
+    struct MetronomeOptions
+    {
+        int sound = 0;              // Metronome::Sound
+        float volumeDb = 0.0f;
+        bool accent = true;         // beat 1 louder/higher
+        bool clickOnPlay = true;    // click during playback (if the metronome is on)
+        bool clickOnRecord = true;  // click during recording (stage 7)
+        int countInBars = 1;        // 0 = no count-in
+        bool countInOnPlay = false;
+        bool countInOnRecord = true;
+    };
+    void setMetronomeOptions (const MetronomeOptions&) noexcept;
+
+    /** Plays one click now (preview, also when stopped). */
+    void previewClick() noexcept { previewPending.store (true); }
+
+    /** True while the count-in runs (playhead waits). */
+    bool isCountingIn() const noexcept { return countingIn.load(); }
+
+    //==========================================================================
+    // MIDI input filter: which messages reach the instrument live ("Thru")
+    enum MidiFilterBit
+    {
+        filterNotes = 1 << 0, filterPolyPressure = 1 << 1, filterControllers = 1 << 2, filterProgramChange = 1 << 3,
+        filterAftertouch = 1 << 4, filterPitchbend = 1 << 5, filterSysEx = 1 << 6
+    };
+    /** Bits of message types that are passed through (default: all except SysEx). */
+    void setMidiThruMask (int mask) noexcept { midiThruMask.store (mask); }
 
     void setMasterGainDb (float db) noexcept;
 
@@ -119,6 +149,11 @@ private:
     juce::AudioDeviceManager deviceManager;
 
     std::atomic<bool> playing { false }, metronomeOn { false }, loopOn { false }, notesOffPending { false };
+    std::atomic<int> metroSound { 0 }, countInBars { 1 }, midiThruMask { 0x3f };
+    std::atomic<float> metroGain { 1.0f };
+    std::atomic<bool> metroAccent { true }, metroOnPlay { true }, countInOnPlay { false };
+    std::atomic<bool> previewPending { false }, countingIn { false };
+    std::atomic<int> playGeneration { 0 };
     std::atomic<int> maxBlock { 512 };
     std::atomic<std::int64_t> positionSamples { 0 };
     std::atomic<double> loopStartSeconds { 0.0 }, loopEndSeconds { 0.0 };
@@ -137,7 +172,9 @@ private:
     // audio thread state (preallocated)
     Metronome metronome;
     bool wasPlaying = false;
-    static constexpr int maxChannels = 8;
+    std::int64_t countInLeft = 0, countInPos = 0;
+    int seenPlayGeneration = 0;
+    static constexpr int maxChannels = 32;
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi, liveBlock;
     juce::MidiMessageCollector liveCollector;

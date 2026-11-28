@@ -16,6 +16,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # the Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Windows release builds also write a .pdb (debug symbols) so crash reports
+# (crash.log) show function names. The .exe stays optimised.
+if(MSVC)
+    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+endif()
+
 option(SMS_BUILD_TESTS "Build the unit tests" ON)
 set(SMS_ASIO_SDK_DIR "" CACHE PATH "Windows: folder of the Steinberg ASIO SDK (GPLv3 option) to enable ASIO")
 

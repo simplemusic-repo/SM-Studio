@@ -34,7 +34,11 @@ public:
     ~PluginHost() override;
 
     // --- installed plug-ins ---------------------------------------------------
-    void startScan();
+    /** Starts the plug-in scan in the background.
+        full = false: only new or changed plug-ins are checked ("Aktualisieren").
+        full = true:  everything is checked again as if nothing was known
+                      (skipped plug-ins included, removed plug-ins disappear). */
+    void startScan (bool full = false);
     bool isScanning() const { return isThreadRunning(); }
     juce::String getStatusText() const;
 
@@ -106,6 +110,9 @@ public:
     /** Prepares a processor (only while the audio thread is not using it). */
     static void prepare (juce::AudioProcessor&, double sampleRate, int blockSize);
 
+    /** Uses only the main stereo bus (no multi-outs / side-chains). Call once after creation. */
+    static void configureBuses (juce::AudioProcessor&);
+
 private:
     struct Instance
     {
@@ -120,6 +127,7 @@ private:
     juce::AudioPluginFormatManager formats;
     juce::KnownPluginList known;
     std::map<juce::String, int> usage;
+    std::atomic<bool> fullScan { false };
     mutable juce::CriticalSection statusLock;
     juce::String scanningName;
     std::atomic<float> scanProgress { 0.0f };

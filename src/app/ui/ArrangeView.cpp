@@ -27,24 +27,69 @@ namespace
 }
 
 //==============================================================================
-/** Small button in the track header with the instrument symbol: opens the plug-in. */
-class InstrumentButton final : public juce::Button
+/** Button in the track header that opens the instrument's window: a clearly
+    raised-looking (but flat) key: filled, bordered, keyboard symbol plus an
+    "open window" arrow. Lit in the accent colour while the window is open. */
+class InstrumentButton final : public juce::Button,
+                               private juce::Timer
 {
 public:
-    InstrumentButton() : juce::Button ("instrument") { setTooltip (u8"Instrument öffnen"); setWantsKeyboardFocus (false); }
+    InstrumentButton() : juce::Button ("instrument")
+    {
+        setTooltip (u8"Instrument öffnen");
+        setWantsKeyboardFocus (false);
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        startTimerHz (4);
+    }
+
+    std::function<bool()> isWindowOpen;
 
     void paintButton (juce::Graphics& g, bool highlighted, bool down) override
     {
+        const bool lit = isWindowOpen && isWindowOpen();
         auto r = getLocalBounds().toFloat().reduced (0.5f);
-        g.setColour (down ? colours::accentDim : (highlighted ? colours::headerLight : colours::header));
-        g.fillRoundedRectangle (r, 3.0f);
-        g.setColour (highlighted ? colours::accent : colours::separator);
-        g.drawRoundedRectangle (r, 3.0f, 1.0f);
 
+        const auto fill = ! isEnabled() ? colours::panelLight
+                        : down          ? colours::accentDim
+                        : lit           ? colours::accent
+                        : highlighted   ? colours::headerLight.brighter (0.45f)
+                                        : colours::headerLight.brighter (0.2f);
+        g.setColour (fill);
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (highlighted || lit ? colours::accent : colours::textDim);
+        g.drawRoundedRectangle (r, 4.0f, highlighted ? 1.5f : 1.0f);
+
+        const auto fg = ! isEnabled() ? colours::textDim.withAlpha (0.4f) : (lit ? colours::textDark : colours::text);
+        g.setColour (fg);
+
+        auto content = r.reduced (6.0f, 4.0f);
+        auto iconArea = content.removeFromLeft (content.getHeight() * 1.3f);
         auto icon = icons::instrument();
-        g.setColour (isEnabled() ? (highlighted ? colours::text : colours::textDim) : colours::textDim.withAlpha (0.4f));
-        g.fillPath (icon, icon.getTransformToScaleToFit (r.reduced (5.0f, 4.0f), true));
+        g.fillPath (icon, icon.getTransformToScaleToFit (iconArea, true));
+
+        // "open in a window" arrow
+        auto a = content.withTrimmedLeft (5.0f).withSizeKeepingCentre (9.0f, 9.0f);
+        juce::Path arrow;
+        arrow.startNewSubPath (a.getX(), a.getBottom());
+        arrow.lineTo (a.getRight(), a.getY());
+        arrow.startNewSubPath (a.getX() + 3.0f, a.getY());
+        arrow.lineTo (a.getRight(), a.getY());
+        arrow.lineTo (a.getRight(), a.getBottom() - 3.0f);
+        g.strokePath (arrow, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
+
+private:
+    void timerCallback() override
+    {
+        const bool lit = isWindowOpen && isWindowOpen();
+        if (lit != wasLit)
+        {
+            wasLit = lit;
+            repaint();
+        }
+    }
+
+    bool wasLit = false;
 };
 
 //==============================================================================
@@ -78,6 +123,7 @@ public:
                         ctx.plugins.getInstanceError (t->id).isNotEmpty() ? ctx.plugins.getInstanceError (t->id)
                                                                          : juce::String (u8"Das Instrument wird noch geladen."));
         };
+        instrumentButton.isWindowOpen = [this] { return ctx.pluginWindows.isOpen (trackId); };
         addChildComponent (instrumentButton);
 
         muteButton.onClick = [this] { toggle (Param::mute); };
@@ -151,7 +197,7 @@ public:
     void resized() override
     {
         name.setBounds (26, 6, getWidth() - 110, 22);
-        instrumentButton.setBounds (28, 33, 30, 22);
+        instrumentButton.setBounds (28, 32, 46, 24);
         auto buttons = juce::Rectangle<int> (getWidth() - 82, 8, 72, 18);
         muteButton.setBounds (buttons.removeFromLeft (22));
         buttons.removeFromLeft (3);

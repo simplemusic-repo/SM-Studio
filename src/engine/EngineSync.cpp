@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "EngineSync.h"
 
+#include "CrashInfo.h"
+
 namespace sms
 {
 
@@ -57,7 +59,10 @@ void EngineSync::update()
     }
 
     for (auto* p : needPrepare)
+    {
+        crashinfo::note ("re-preparing " + p->getName() + " for " + juce::String (builtForRate) + " Hz / " + juce::String (builtForBlock));
         PluginHost::prepare (*p, builtForRate, builtForBlock);
+    }
 
     engine.publish (std::move (snap));
     dirty = false;

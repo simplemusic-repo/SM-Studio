@@ -759,6 +759,8 @@ BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
         };
     }
 
+    addChildComponent (sortTabs);
+
     search.setTextToShowWhenEmpty ("Suchen", colours::textDim);
     search.setTooltip ("Liste filtern");
     search.setFont (font (13.0f));
@@ -820,25 +822,27 @@ void BrowserPanel::selectTab (int index)
     for (auto* c : std::initializer_list<juce::Component*> { &search, &list, &hint, &status })
         c->setVisible (activeView == nullptr);
 
-    // sort / group selector ("Hersteller | Art | Favoriten")
-    sortButtons.clear();
+    // sort / group selector ("Hersteller | Art | Favoriten") as tabs
+    sortTabs.onChange = nullptr;
+    sortTabs.clearTabs();
     if (activeView == nullptr && index >= 0 && index < (int) sources.size())
     {
         auto source = sources[(size_t) index];
         const auto modes = source->getSortModes();
-        const auto current = ctx.settings.getIntValue ("browser." + source->getId() + ".sort", 0);
         for (int m = 0; m < modes.size(); ++m)
         {
-            auto* b = sortButtons.add (new juce::TextButton (modes[m]));
-            b->setTooltip (modes[m] == "Favoriten" ? juce::String (u8"Die am häufigsten benutzten Plug-ins zuerst")
-                                                   : juce::String ("Nach ") + modes[m] + " gruppieren");
-            b->setWantsKeyboardFocus (false);
-            b->setToggleState (m == current, juce::dontSendNotification);
-            b->setConnectedEdges ((m > 0 ? juce::Button::ConnectedOnLeft : 0) | (m < modes.size() - 1 ? juce::Button::ConnectedOnRight : 0));
-            b->onClick = [this, m] { setSortMode (m); };
-            addAndMakeVisible (b);
+            sortTabs.addTab (modes[m], colours::panel, -1);
+            if (auto* b = sortTabs.getTabButton (m))
+                b->setTooltip (modes[m] == "Favoriten" ? juce::String (u8"Die am häufigsten benutzten Plug-ins zuerst")
+                                                       : juce::String ("Nach ") + modes[m] + " gruppieren");
         }
+        if (modes.size() > 0)
+            sortTabs.setCurrentTabIndex (juce::jlimit (0, modes.size() - 1,
+                                                       ctx.settings.getIntValue ("browser." + source->getId() + ".sort", 0)),
+                                         false);
     }
+    sortTabs.setVisible (sortTabs.getNumTabs() > 0);
+    sortTabs.onChange = [this] (int m) { setSortMode (m); };
 
     reload();
 }
@@ -852,8 +856,6 @@ void BrowserPanel::setSortMode (int mode)
     auto source = sources[(size_t) currentTab];
     source->setSortMode (mode);
     ctx.settings.setValue ("browser." + source->getId() + ".sort", mode);
-    for (int i = 0; i < sortButtons.size(); ++i)
-        sortButtons[i]->setToggleState (i == mode, juce::dontSendNotification);
     list.deselectAllRows();
     reload();
 }
@@ -1043,13 +1045,10 @@ void BrowserPanel::resized()
     search.setBounds (r.removeFromTop (26));
     r.removeFromTop (6);
 
-    if (! sortButtons.isEmpty())
+    if (sortTabs.getNumTabs() > 0)
     {
-        auto row = r.removeFromTop (24);
-        const auto w = row.getWidth() / sortButtons.size();
-        for (auto* b : sortButtons)
-            b->setBounds (row.removeFromLeft (w));
-        r.removeFromTop (6);
+        sortTabs.setBounds (r.removeFromTop (28));
+        r.removeFromTop (4);
     }
 
     // buttons on the left, status text next to them

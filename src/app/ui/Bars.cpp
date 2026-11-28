@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "Bars.h"
 
+#include <utility>
+
 #include "core/Commands.h"
 #include "extension/ExtensionRegistry.h"
 
@@ -123,6 +125,16 @@ void Toolbar::resized()
 }
 
 //==============================================================================
+void TransportBar::mouseDown (const juce::MouseEvent& e)
+{
+    // right-click on the metronome: its settings in a small window
+    if (e.eventComponent != &metronome)
+        return;
+    metronomeRightClick = e.mods.isPopupMenu();
+    if (metronomeRightClick)
+        ctx.registry.invoke ("transport.metronomeSettings");
+}
+
 TransportBar::TransportBar (AppContext& c, std::function<bool (const juce::String&)> ticked)
     : ctx (c), isTicked (std::move (ticked))
 {
@@ -137,7 +149,14 @@ TransportBar::TransportBar (AppContext& c, std::function<bool (const juce::Strin
     forward.onClick   = [this] { ctx.registry.invoke ("transport.forward"); };
     stop.onClick      = [this] { ctx.registry.invoke ("transport.stop"); };
     play.onClick      = [this] { ctx.registry.invoke ("transport.play"); };
-    metronome.onClick = [this] { ctx.registry.invoke ("transport.metronome"); };
+    metronome.onClick = [this]
+    {
+        if (std::exchange (metronomeRightClick, false))
+            return; // right-click opens the settings instead of switching
+        ctx.registry.invoke ("transport.metronome");
+    };
+    metronome.setTooltip (juce::String (u8"Metronom an/aus (C) – Rechtsklick: Klang, Lautstärke, Vorzähler …"));
+    metronome.addMouseListener (this, false);
     loop.onClick      = [this] { ctx.registry.invoke ("transport.loop"); };
     record.setEnabled (false);
 

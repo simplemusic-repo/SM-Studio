@@ -100,7 +100,7 @@ namespace
 
         std::vector<Button> getButtons() override
         {
-            return { { juce::String (u8"↻"), u8"Plug-in-Liste aktualisieren (nach neuen Plug-ins suchen)",
+            return { { juce::String (u8"↻"), u8"Aktualisieren: nach neu installierten Plug-ins suchen",
                        [this] { startPluginScanWithProgress (ctx); } } };
         }
 

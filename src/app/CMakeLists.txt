@@ -36,7 +36,9 @@ target_sources(SMStudio PRIVATE
     ui/PluginScanDialog.h
     ui/PluginScanDialog.cpp
     ui/PluginWindows.h
-    ui/PluginWindows.cpp)
+    ui/PluginWindows.cpp
+    ui/SettingsWidgets.h
+    ui/SettingsWidgets.cpp)
 
 target_include_directories(SMStudio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
