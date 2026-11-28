@@ -3,8 +3,11 @@
 
 #include "Modules.h"
 
+#include <limits>
+
 #include "SongHelpers.h"
 #include "core/Commands.h"
+#include "core/RegionOps.h"
 #include "extension/ExtensionRegistry.h"
 #include "ui/Theme.h"
 
@@ -69,6 +72,167 @@ namespace
                 reg.addAction (std::move (a));
             }
 
+            // --- events ----------------------------------------------------------
+            auto selectedEvents = [&ctx]
+            {
+                std::vector<std::pair<ObjectId, Region>> out;
+                for (auto id : ctx.selection.getSelectedRegions())
+                    if (auto* t = ctx.song.findTrackOfRegion (id))
+                        out.emplace_back (t->id, *t->findRegion (id));
+                return out;
+            };
+            auto hasEvents = [&ctx] { return ! ctx.selection.getSelectedRegions().empty(); };
+
+            {
+                ActionInfo a;
+                a.id = "edit.delete";
+                a.name = u8"Löschen";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 30;
+                a.separatorBefore = true;
+                a.keys = { juce::KeyPress (juce::KeyPress::deleteKey), juce::KeyPress (juce::KeyPress::backspaceKey) };
+                a.isEnabled = [&ctx, hasEvents] { return hasEvents() || ctx.song.findTrack (ctx.selection.getSelectedTrack()) != nullptr; };
+                a.dynamicName = [hasEvents] { return hasEvents() ? juce::String (u8"Events löschen") : juce::String (u8"Spur löschen"); };
+                a.perform = [&ctx, selectedEvents]
+                {
+                    auto events = selectedEvents();
+                    if (events.empty())
+                    {
+                        ctx.registry.invoke ("track.delete"); // nothing selected on the timeline: delete the track
+                        return;
+                    }
+                    ctx.history.beginTransaction (u8"Events löschen");
+                    for (auto& [trackId, r] : events)
+                        ctx.perform (std::make_unique<commands::RemoveRegion> (trackId, r.id));
+                    ctx.history.endTransaction();
+                    ctx.selection.clearRegions();
+                };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.duplicate";
+                a.name = "Duplizieren";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 40;
+                a.keys = { juce::KeyPress ('d'), cmd ('d') };
+                a.isEnabled = hasEvents;
+                a.perform = [&ctx, selectedEvents]
+                {
+                    auto events = selectedEvents();
+                    if (events.empty())
+                        return;
+                    Tick first = std::numeric_limits<Tick>::max(), last = 0;
+                    for (auto& [t, r] : events)
+                    {
+                        first = std::min (first, r.position);
+                        last = std::max (last, r.getEnd());
+                    }
+                    const auto offset = last - first; // place the copy right after the selection
+                    std::vector<ObjectId> copies;
+                    ctx.history.beginTransaction ("Duplizieren");
+                    for (auto& [trackId, r] : events)
+                    {
+                        auto c = regionops::duplicate (r, ctx.song.getIds());
+                        c.position += offset;
+                        copies.push_back (c.id);
+                        ctx.perform (std::make_unique<commands::AddRegion> (trackId, std::move (c)));
+                    }
+                    ctx.history.endTransaction();
+                    ctx.selection.setSelectedRegions (copies);
+                };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.splitAtCursor";
+                a.name = "Am Abspielpunkt teilen";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 50;
+                a.keys = { juce::KeyPress ('x', juce::ModifierKeys::altModifier, 0) };
+                a.perform = [&ctx, selectedEvents]
+                {
+                    const auto& map = ctx.song.getTempoMap();
+                    const auto at = map.secondsToTicks (ctx.engine.getPositionSeconds());
+                    auto events = selectedEvents();
+
+                    // nothing selected: split the events of the selected track
+                    if (events.empty())
+                        if (auto* t = ctx.song.findTrack (ctx.selection.getSelectedTrack()))
+                            for (auto& r : t->regions)
+                                events.emplace_back (t->id, r);
+
+                    std::vector<ObjectId> right;
+                    ctx.history.beginTransaction ("Event teilen");
+                    for (auto& [trackId, r] : events)
+                    {
+                        if (auto parts = regionops::split (r, at, ctx.song.findAudioSource (r.sourceId), map, ctx.song.getIds()))
+                        {
+                            right.push_back (parts->second.id);
+                            ctx.perform (std::make_unique<commands::UpdateRegion> (trackId, trackId, parts->first, "Event teilen"));
+                            ctx.perform (std::make_unique<commands::AddRegion> (trackId, parts->second));
+                        }
+                    }
+                    ctx.history.endTransaction();
+                    if (! right.empty())
+                        ctx.selection.setSelectedRegions (right);
+                };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.toggleMuteEvents";
+                a.name = "Events stumm ein/aus";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 60;
+                a.keys = { juce::KeyPress ('m', juce::ModifierKeys::shiftModifier, 0) };
+                a.isEnabled = hasEvents;
+                a.perform = [&ctx, selectedEvents]
+                {
+                    auto events = selectedEvents();
+                    if (events.empty())
+                        return;
+                    const bool mute = ! events.front().second.muted;
+                    ctx.history.beginTransaction ("Events stummschalten");
+                    for (auto& [trackId, r] : events)
+                    {
+                        auto m = r;
+                        m.muted = mute;
+                        ctx.perform (std::make_unique<commands::UpdateRegion> (trackId, trackId, m, "Events stummschalten"));
+                    }
+                    ctx.history.endTransaction();
+                };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.selectAll";
+                a.name = u8"Alle Events auswählen";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 70;
+                a.separatorBefore = true;
+                a.keys = { cmd ('a') };
+                a.perform = [&ctx]
+                {
+                    std::vector<ObjectId> ids;
+                    for (auto& t : ctx.song.getTracks())
+                        for (auto& r : t.regions)
+                            ids.push_back (r.id);
+                    ctx.selection.setSelectedRegions (ids);
+                };
+                reg.addAction (std::move (a));
+            }
+            {
+                ActionInfo a;
+                a.id = "edit.deselect";
+                a.name = u8"Auswahl aufheben";
+                a.menu = "Bearbeiten";
+                a.menuOrder = 80;
+                a.keys = { juce::KeyPress (juce::KeyPress::escapeKey) };
+                a.perform = [&ctx] { ctx.selection.clearRegions(); };
+                reg.addAction (std::move (a));
+            }
+
             // tools 1..6
             const char* toolNames[] = { "Pfeil", "Bereich", "Teilen", "Radiergummi", "Stift", "Stummschalten" };
             for (int i = 0; i < 6; ++i)
@@ -119,7 +283,6 @@ namespace
                 a.menu = "Spur";
                 a.menuOrder = 30;
                 a.separatorBefore = true;
-                a.keys = { juce::KeyPress (juce::KeyPress::deleteKey), juce::KeyPress (juce::KeyPress::backspaceKey) };
                 a.isEnabled = [&ctx] { return ctx.song.findTrack (ctx.selection.getSelectedTrack()) != nullptr; };
                 a.perform = [&ctx]
                 {

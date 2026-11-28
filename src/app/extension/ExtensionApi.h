@@ -21,6 +21,7 @@
 #include "core/Model.h"
 #include "core/Selection.h"
 #include "engine/AudioEngine.h"
+#include "engine/AudioPool.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -67,6 +68,7 @@ struct AppContext
     CommandHistory& history;
     Selection& selection;
     AudioEngine& engine;
+    AudioPool& pool;
     ExtensionRegistry& registry;
     EditState& edit;
 

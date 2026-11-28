@@ -265,6 +265,72 @@ void RemoveRegion::undo (Song& s)
 }
 
 //==============================================================================
+bool UpdateRegion::perform (Song& s)
+{
+    auto* src = s.findTrack (from);
+    auto* dst = s.findTrack (to);
+    if (src == nullptr || dst == nullptr)
+        return false;
+
+    auto* current = src->findRegion (region.id);
+    if (current == nullptr)
+        return false;
+
+    if (from == to && current->position == region.position && current->length == region.length
+        && current->muted == region.muted && current->sourceOffsetSamples == region.sourceOffsetSamples
+        && current->notes.size() == region.notes.size() && current->name == region.name)
+    {
+        bool sameNotes = true;
+        for (size_t i = 0; i < region.notes.size(); ++i)
+            sameNotes = sameNotes && current->notes[i].start == region.notes[i].start;
+        if (sameNotes)
+            return false;
+    }
+
+    s.modifyTrack (from, [this] (Track& t)
+    {
+        for (size_t i = 0; i < t.regions.size(); ++i)
+        {
+            if (t.regions[i].id == region.id)
+            {
+                oldIndex = i;
+                old = std::move (t.regions[i]);
+                t.regions.erase (t.regions.begin() + (std::ptrdiff_t) i);
+                break;
+            }
+        }
+    }, SongChange::What::regionsChanged);
+
+    s.modifyTrack (to, [this] (Track& t)
+    {
+        const auto i = std::min (oldIndex, t.regions.size());
+        t.regions.insert (t.regions.begin() + (std::ptrdiff_t) i, region);
+    }, SongChange::What::regionsChanged);
+
+    return true;
+}
+
+void UpdateRegion::undo (Song& s)
+{
+    if (! old)
+        return;
+
+    s.modifyTrack (to, [this] (Track& t)
+    {
+        auto& rs = t.regions;
+        rs.erase (std::remove_if (rs.begin(), rs.end(), [this] (auto& r) { return r.id == region.id; }), rs.end());
+    }, SongChange::What::regionsChanged);
+
+    s.modifyTrack (from, [this] (Track& t)
+    {
+        const auto i = std::min (oldIndex, t.regions.size());
+        t.regions.insert (t.regions.begin() + (std::ptrdiff_t) i, std::move (*old));
+    }, SongChange::What::regionsChanged);
+
+    old.reset();
+}
+
+//==============================================================================
 bool SetInstrument::perform (Song& s)
 {
     auto* t = s.findTrack (trackId);

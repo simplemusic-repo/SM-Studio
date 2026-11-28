@@ -13,12 +13,14 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
 - [x] Konsole mit großen Fadern, dB-Skala, Zahleneingabe für Lautstärke/Panorama
 - [x] Panels abkoppelbar (zweiter Bildschirm), Layout und Fensterpositionen werden gespeichert
 
-## Etappe 2 – Arrangement & Audio-Wiedergabe
-- [ ] Render-Snapshots für die Engine, Audio-Regionen abspielen (mit Lautstärke/Pan/Mute/Solo)
-- [ ] Wellenform-Darstellung (Peak-Cache)
-- [ ] Events auswählen, verschieben, kopieren, Länge ändern, teilen, löschen (Werkzeuge)
-- [ ] Spuren per Drag & Drop umsortieren, Spurhöhe ändern
-- [ ] Loop-Bereich
+## ✅ Etappe 2 – Arrangement & Audio-Wiedergabe
+- [x] Render-Snapshots für die Engine, Audio-Events abspielen (mit Lautstärke/Pan/Mute/Solo, Gain-Rampen, Abtastratenwandlung)
+- [x] Audio-Pool (Laden im Hintergrund), Wellenform-Darstellung (Peaks)
+- [x] Events auswählen, verschieben (auch spurübergreifend), kopieren, Länge ändern, teilen, löschen, stummschalten, duplizieren
+- [x] Werkzeuge Pfeil/Teilen/Radiergummi/Stift/Stumm, Auswahlrahmen
+- [x] Spuren per Drag & Drop umsortieren
+- [x] Loop-Bereich (Lineal, Transport, Tastatur)
+- [ ] später: Spurhöhe ändern, Fades/Event-Lautstärke per Maus, Streaming langer Dateien von der Platte, bessere Resampling-Qualität
 
 ## Etappe 3 – Plug-ins
 - [ ] VST3-Hosting (Windows/macOS), AU (macOS), Plug-in-Scan in separatem Prozess

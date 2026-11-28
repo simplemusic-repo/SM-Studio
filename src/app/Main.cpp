@@ -9,6 +9,7 @@
 //   --show <panels>        comma separated: console,inspector,browser (for --screenshot)
 
 #include "SongHelpers.h"
+#include "engine/EngineSync.h"
 #include "extension/ExtensionRegistry.h"
 #include "modules/Modules.h"
 #include "ui/MainComponent.h"
@@ -18,18 +19,15 @@ namespace sms
 {
 
 /** Owns the document and all services; builds the AppContext. */
-struct AppState final : private Song::Listener
+struct AppState final
 {
     /** @param persistentSettings  false for screenshots/tests: settings stay in memory */
     explicit AppState (bool persistentSettings) : settings (chooseSettings (persistentSettings))
     {
-        song.addListener (this);
-        syncTempo();
     }
 
-    ~AppState() override
+    ~AppState()
     {
-        song.removeListener (this);
         appProperties.saveIfNeeded();
     }
 
@@ -52,17 +50,6 @@ struct AppState final : private Song::Listener
         return *appProperties.getUserSettings();
     }
 
-    void songChanged (const SongChange& c) override
-    {
-        if (c.what == SongChange::What::tempoChanged || c.what == SongChange::What::reset)
-            syncTempo();
-    }
-
-    void syncTempo()
-    {
-        engine.setTempo (song.getTempoMap().getTempo(), song.getTempoMap().getTimeSignature());
-    }
-
     juce::ApplicationProperties appProperties;
     juce::PropertySet memorySettings;
     juce::PropertySet& settings;
@@ -71,9 +58,11 @@ struct AppState final : private Song::Listener
     CommandHistory history { song };
     Selection selection;
     AudioEngine engine;
+    AudioPool pool { song };
+    EngineSync engineSync { song, pool, engine };
     ExtensionRegistry registry;
     EditState edit;
-    AppContext ctx { song, history, selection, engine, registry, edit, settings };
+    AppContext ctx { song, history, selection, engine, pool, registry, edit, settings };
 };
 
 //==============================================================================

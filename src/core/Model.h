@@ -98,6 +98,18 @@ struct Track
 };
 
 //==============================================================================
+/** Loop / cycle range of the transport. */
+struct LoopRange
+{
+    Tick start = 0;
+    Tick end = 0;
+    bool enabled = false;
+
+    bool isValid() const noexcept { return end > start; }
+    bool operator== (const LoopRange&) const = default;
+};
+
+//==============================================================================
 /** What changed in a song – passed to listeners. */
 struct SongChange
 {
@@ -110,6 +122,7 @@ struct SongChange
         regionsChanged, // regions of one track
         tempoChanged,
         sourcesChanged,
+        loopChanged,    // loop range or loop on/off (not undoable)
         reset           // everything (e.g. project loaded)
     };
 
@@ -187,6 +200,13 @@ public:
     void setTempo (double bpm);
     void setTimeSignature (TimeSignature);
 
+    /** Loop range. Changed directly (not undoable, like in most DAWs). */
+    const LoopRange& getLoop() const noexcept { return loop; }
+    void setLoop (LoopRange);
+
+    /** Finds the track containing a region. */
+    const Track* findTrackOfRegion (ObjectId regionId) const;
+
     /** End of the last region (at least 8 bars) – used for scroll range and export. */
     Tick getSongEnd() const;
 
@@ -202,6 +222,7 @@ private:
     std::vector<Track> tracks;
     std::vector<AudioSource> sources;
     TempoMap tempoMap;
+    LoopRange loop;
     juce::ListenerList<Listener> listeners;
 
     JUCE_DECLARE_NON_COPYABLE (Song)

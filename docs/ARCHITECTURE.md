@@ -52,8 +52,23 @@ aktualisieren sich selbst. `Selection` (nicht rückgängig machbar) meldet Auswa
 - `AudioEngine` öffnet das Audiogerät (JUCE `AudioDeviceManager`) und läuft im Audio-Thread.
 - **Regeln für den Audio-Thread:** keine Locks, keine Speicherallokation, kein Zugriff auf `Song`.
   Kommunikation nur über Atomics.
-- Ab Etappe 2 bekommt die Engine **Render-Snapshots**: unveränderliche Kopien der
-  abspielrelevanten Song-Daten, die per Atomic-Pointer getauscht werden.
+- **`AudioPool`** lädt die Audiodateien des Songs im Hintergrund komplett in den Speicher
+  (unveränderlich danach) und berechnet Peaks für die Wellenformen.
+- **`RenderSnapshot`**: unveränderliche Kopie der abspielrelevanten Song-Daten in Samples
+  (Spuren mit fertig verrechneter Lautstärke/Pan/Mute/Solo, Clips mit Quellposition und
+  Resampling-Faktor). `EngineSync` baut bei Änderungen (gesammelt, 30 Hz) einen neuen
+  Snapshot und übergibt ihn mit `AudioEngine::publish`.
+- Austausch per **Hazard-Pointer**: Der Audio-Thread meldet in `inUse`, welchen Snapshot
+  er liest; der Message-Thread löscht nur Snapshots, die weder aktuell noch in Benutzung
+  sind (`collectGarbage`). Keine Locks, keine Freigabe im Audio-Thread.
+- `AudioEngine::renderBlock` ist die Echtzeit-Funktion; Tests rufen sie direkt offline auf
+  (`tests/PlaybackTests.cpp`).
+
+### UI-Regel: nichts löschen, was gerade ein Ereignis bearbeitet
+
+Wenn eine Komponente durch ihre eigene Aktion neu aufgebaut würde (z. B. Spurkopf
+verschiebt Spur → Spurköpfe werden neu erzeugt), den Befehl per
+`juce::MessageManager::callAsync` ausführen.
 
 ## app – Module und Extension-API
 

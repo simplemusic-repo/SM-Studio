@@ -216,7 +216,11 @@ void InspectorPanel::rebuildInserts()
             addAndMakeVisible (label);
 
             remove.setTooltip ("Effekt entfernen");
-            remove.onClick = [this] { ctx.perform (std::make_unique<commands::RemoveInsert> (trackId, slotId)); };
+            // async: removing the insert rebuilds the inspector rows, including this one
+            remove.onClick = [&c = ctx, t = trackId, sl = slotId]
+            {
+                juce::MessageManager::callAsync ([&c, t, sl] { c.perform (std::make_unique<commands::RemoveInsert> (t, sl)); });
+            };
             addAndMakeVisible (remove);
         }
 
@@ -458,8 +462,12 @@ void BrowserPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
     if (auto* handler = ctx.registry.findDropHandler (item.kind))
     {
         DropTarget target;
-        target.trackId = ctx.selection.getSelectedTrack();
-        const auto idx = ctx.song.indexOfTrack (target.trackId);
+        const auto selected = ctx.selection.getSelectedTrack();
+        // audio files get their own new track (below the selected one);
+        // instruments/effects act on the selected track
+        if (item.kind != "audiofile")
+            target.trackId = selected;
+        const auto idx = ctx.song.indexOfTrack (selected);
         target.insertIndex = idx >= 0 ? idx + 1 : ctx.song.getNumTracks();
         target.position = ctx.edit.snapTick (ctx.song.getTempoMap().secondsToTicks (ctx.engine.getPositionSeconds()),
                                              ctx.song.getTempoMap());

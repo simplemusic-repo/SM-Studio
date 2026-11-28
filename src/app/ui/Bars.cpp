@@ -136,8 +136,8 @@ TransportBar::TransportBar (AppContext& c, std::function<bool (const juce::Strin
     stop.onClick      = [this] { ctx.registry.invoke ("transport.stop"); };
     play.onClick      = [this] { ctx.registry.invoke ("transport.play"); };
     metronome.onClick = [this] { ctx.registry.invoke ("transport.metronome"); };
+    loop.onClick      = [this] { ctx.registry.invoke ("transport.loop"); };
     record.setEnabled (false);
-    loop.setEnabled (false);
 
     for (auto* l : { &tempo, &signature })
     {
@@ -200,12 +200,15 @@ void TransportBar::refreshToggles()
     mixButton.setToggleState (isTicked ("view.console"), juce::dontSendNotification);
     browseButton.setToggleState (isTicked ("view.browser"), juce::dontSendNotification);
     metronome.setToggleState (ctx.engine.isMetronomeEnabled(), juce::dontSendNotification);
+    loop.setToggleState (ctx.song.getLoop().enabled, juce::dontSendNotification);
 }
 
 void TransportBar::songChanged (const SongChange& c)
 {
     if (c.what == SongChange::What::tempoChanged || c.what == SongChange::What::reset)
         updateTempoLabels();
+    if (c.what == SongChange::What::loopChanged)
+        loop.setToggleState (ctx.song.getLoop().enabled, juce::dontSendNotification);
 }
 
 void TransportBar::updateTempoLabels()

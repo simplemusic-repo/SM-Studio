@@ -174,6 +174,26 @@ private:
     size_t index = 0;
 };
 
+/** Replaces a region with a new state – optionally moving it to another
+    track (same id). Used for move, resize, mute, and split (left part). */
+class UpdateRegion final : public Command
+{
+public:
+    UpdateRegion (ObjectId fromTrack, ObjectId toTrack, Region newState, juce::String name)
+        : from (fromTrack), to (toTrack), region (std::move (newState)), commandName (std::move (name)) {}
+
+    juce::String getName() const override { return commandName; }
+    bool perform (Song&) override;
+    void undo (Song&) override;
+
+private:
+    ObjectId from, to;
+    Region region;
+    std::optional<Region> old;
+    size_t oldIndex = 0;
+    juce::String commandName;
+};
+
 //==============================================================================
 /** Sets (or replaces) the instrument of an instrument track. */
 class SetInstrument final : public Command

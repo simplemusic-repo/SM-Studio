@@ -60,7 +60,7 @@ private:
                       stop { "Stopp", theme::icons::stop() },
                       play { "Wiedergabe (Leertaste)", theme::icons::play(), theme::colours::play },
                       record { "Aufnahme (folgt in Etappe 7)", theme::icons::record(), theme::colours::record },
-                      loop { "Loop (folgt)", theme::icons::loop() },
+                      loop { "Loop (L oder /)", theme::icons::loop() },
                       metronome { "Metronom (C)", theme::icons::metronome() };
 
     juce::Label tempo, signature;

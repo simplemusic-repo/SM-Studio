@@ -6,7 +6,7 @@ Inspector links, Browser rechts, Konsole unten, Transportleiste unten.
 
 > *A free, open-source, linear DAW for Windows and macOS, written in C++ with JUCE.*
 
-**Status:** frühe Entwicklung (Etappe 1 – Grundgerüst). Noch nicht für echte Produktionen geeignet.
+**Status:** frühe Entwicklung (Etappe 2 – Audio-Wiedergabe und Bearbeitung). Noch nicht für echte Produktionen geeignet.
 Siehe [Roadmap](docs/ROADMAP.md).
 
 ![Screenshot](docs/screenshot.png)
@@ -21,10 +21,18 @@ Siehe [Roadmap](docs/ROADMAP.md).
 - Konsole, Browser und Inspector abkoppelbar (eigenes Fenster, z. B. auf einem zweiten Bildschirm);
   Fensterpositionen und Layout werden gespeichert
 - Rückgängig/Wiederherstellen für alle Änderungen
+- Audio-Events abspielen (Lautstärke, Panorama, Stumm, Solo), Wellenformen, Loop-Bereich
+- Events auswählen (auch per Rahmen), verschieben (auch auf andere Spuren), kopieren (Alt+Ziehen),
+  Länge ändern, teilen, löschen, stummschalten, duplizieren; Spuren per Ziehen umsortieren
 - Audioausgabe mit Transport (Play/Stop/Positionieren) und Metronom
 - Menüs und Tastaturkürzel kommen vollständig aus dem Modulsystem
 
 Instrumente und Effekte im Browser sind bis zum Plug-in-Hosting (Etappe 3) Platzhalter.
+
+**Maus im Arrangement:** Event anklicken = auswählen (Strg/Cmd oder Umschalt: hinzufügen),
+ziehen = verschieben, Alt+Ziehen = kopieren, Ränder ziehen = Länge ändern, Umschalt beim Ziehen = ohne Raster.
+Leere Fläche ziehen = Auswahlrahmen. Lineal oben ziehen = Loop-Bereich, unten klicken = Abspielposition.
+Spurkopf hoch/runter ziehen = Spur umsortieren.
 
 ## Tastaturkürzel
 
@@ -34,11 +42,17 @@ Instrumente und Effekte im Browser sind bis zum Plug-in-Hosting (Etappe 3) Platz
 | Pos1 oder `,` | Zum Anfang |
 | ← / → | Einen Takt zurück / vor |
 | C | Metronom |
+| L oder / | Loop ein/aus |
+| P | Loop auf ausgewählte Events setzen |
+| Entf | Ausgewählte Events löschen (sonst die ausgewählte Spur) |
+| D | Ausgewählte Events duplizieren |
+| Alt+X | Am Abspielpunkt teilen |
+| Umschalt+M | Events stumm ein/aus |
+| Strg/Cmd+A, Esc | Alle Events auswählen / Auswahl aufheben |
 | T / Umschalt+T | Audio- / Instrumentenspur hinzufügen |
-| Entf | Ausgewählte Spur löschen |
 | ↑ / ↓ | Spur auswählen |
 | M / S | Spur stumm / solo |
-| 1 – 6 | Werkzeuge |
+| 1 – 6 | Werkzeuge: Pfeil, Bereich, Teilen, Radiergummi, Stift, Stumm |
 | Strg/Cmd+Z, Strg/Cmd+Umschalt+Z | Rückgängig / Wiederherstellen |
 | F3 / F4 / F5 | Konsole / Inspector / Browser ein-/ausblenden |
 | Strg/Cmd + Mausrad | Zoom |
