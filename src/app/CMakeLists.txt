@@ -31,6 +31,8 @@ target_sources(SMStudio PRIVATE
     ui/Panels.cpp
     ui/MainComponent.h
     ui/MainComponent.cpp
+    ui/PluginScanDialog.h
+    ui/PluginScanDialog.cpp
     ui/PluginWindows.h
     ui/PluginWindows.cpp)
 

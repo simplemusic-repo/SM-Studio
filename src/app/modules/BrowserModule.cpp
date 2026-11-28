@@ -11,6 +11,7 @@
 #include "SongHelpers.h"
 #include "core/Commands.h"
 #include "extension/ExtensionRegistry.h"
+#include "ui/PluginScanDialog.h"
 #include "ui/Theme.h"
 
 namespace sms
@@ -23,7 +24,7 @@ namespace
                                private juce::ChangeListener
     {
     public:
-        PluginSource (PluginHost& h, bool instrumentsOnly) : host (h), instruments (instrumentsOnly)
+        PluginSource (AppContext& c, bool instrumentsOnly) : ctx (c), host (c.plugins), instruments (instrumentsOnly)
         {
             host.addChangeListener (this);
         }
@@ -47,7 +48,7 @@ namespace
 
         std::vector<Button> getButtons() override
         {
-            return { { "Plug-ins suchen", u8"Installierte VST3-Plug-ins (am Mac auch Audio Units) suchen", [this] { host.startScan(); } } };
+            return { { "Plug-ins suchen", u8"Installierte VST3-Plug-ins (am Mac auch Audio Units) suchen", [this] { startPluginScanWithProgress (ctx); } } };
         }
 
     private:
@@ -57,6 +58,7 @@ namespace
                 onItemsChanged();
         }
 
+        AppContext& ctx;
         PluginHost& host;
         bool instruments;
     };
@@ -350,8 +352,8 @@ namespace
         {
             auto& reg = ctx.registry;
 
-            reg.addBrowserSource (std::make_shared<PluginSource> (ctx.plugins, true));
-            reg.addBrowserSource (std::make_shared<PluginSource> (ctx.plugins, false));
+            reg.addBrowserSource (std::make_shared<PluginSource> (ctx, true));
+            reg.addBrowserSource (std::make_shared<PluginSource> (ctx, false));
 
             fileSource = std::make_shared<FileSource>();
             reg.addBrowserSource (fileSource);

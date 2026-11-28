@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "ArrangeView.h"
 
+#include "PluginWindows.h"
 #include "SongHelpers.h"
 #include "core/Commands.h"
 #include "core/RegionOps.h"
@@ -26,6 +27,31 @@ namespace
 }
 
 //==============================================================================
+/** Flat button in the track header showing the instrument; click opens its window. */
+class InstrumentButton final : public juce::Button
+{
+public:
+    InstrumentButton() : juce::Button ("instrument") { setTooltip (u8"Instrument öffnen"); setWantsKeyboardFocus (false); }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+    {
+        auto r = getLocalBounds().toFloat();
+        if (highlighted || down)
+        {
+            g.setColour (colours::headerLight.withAlpha (down ? 0.7f : 0.45f));
+            g.fillRoundedRectangle (r, 3.0f);
+        }
+
+        auto icon = icons::instrument();
+        g.setColour (highlighted ? colours::accent : colours::textDim);
+        g.fillPath (icon, icon.getTransformToScaleToFit (r.removeFromLeft (20.0f).reduced (2.0f, 1.0f), true));
+        g.setColour (highlighted ? colours::text : colours::textDim);
+        g.setFont (font (12.0f));
+        g.drawText (getButtonText(), r.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
+    }
+};
+
+//==============================================================================
 class TrackHeader final : public juce::Component,
                           public juce::SettableTooltipClient
 {
@@ -47,6 +73,17 @@ public:
             addAndMakeVisible (*b);
         }
 
+        instrumentButton.onClick = [this]
+        {
+            if (auto* t = ctx.song.findTrack (trackId))
+                if (t->instrumentPluginId.isNotEmpty()
+                    && ! ctx.pluginWindows.open (t->id, t->instrumentPluginId, t->instrumentName + juce::String (u8" – ") + t->name))
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, t->instrumentName,
+                        ctx.plugins.getInstanceError (t->id).isNotEmpty() ? ctx.plugins.getInstanceError (t->id)
+                                                                         : juce::String (u8"Das Instrument wird noch geladen."));
+        };
+        addChildComponent (instrumentButton);
+
         muteButton.onClick = [this] { toggle (Param::mute); };
         soloButton.onClick = [this] { toggle (Param::solo); };
         recButton.onClick  = [this] { toggle (Param::armed); };
@@ -67,6 +104,9 @@ public:
             isInstrument = t->typeId == "instrument";
             subtitle = isInstrument ? (t->instrumentName.isNotEmpty() ? t->instrumentName : juce::String ("Kein Instrument"))
                                     : juce::String ("Audio");
+            instrumentButton.setButtonText (subtitle);
+            instrumentButton.setVisible (isInstrument);
+            instrumentButton.setEnabled (t->instrumentPluginId.isNotEmpty());
         }
         repaint();
     }
@@ -89,13 +129,16 @@ public:
         g.setFont (font (11.5f, true));
         g.drawText (juce::String (index + 1), strip.removeFromTop (22), juce::Justification::centred);
 
-        auto iconArea = juce::Rectangle<float> (30.0f, 34.0f, 16.0f, 16.0f);
-        auto icon = isInstrument ? icons::instrument() : icons::waveform();
-        g.setColour (colours::textDim);
-        g.fillPath (icon, icon.getTransformToScaleToFit (iconArea, true));
+        if (! isInstrument) // instrument tracks show the clickable instrument button instead
+        {
+            auto iconArea = juce::Rectangle<float> (30.0f, 34.0f, 16.0f, 16.0f);
+            auto icon = icons::waveform();
+            g.setColour (colours::textDim);
+            g.fillPath (icon, icon.getTransformToScaleToFit (iconArea, true));
 
-        g.setFont (font (12.0f));
-        g.drawText (subtitle, 52, 34, getWidth() - 140, 16, juce::Justification::centredLeft, true);
+            g.setFont (font (12.0f));
+            g.drawText (subtitle, 52, 34, getWidth() - 140, 16, juce::Justification::centredLeft, true);
+        }
 
         if (selected)
         {
@@ -111,6 +154,7 @@ public:
     void resized() override
     {
         name.setBounds (26, 6, getWidth() - 110, 22);
+        instrumentButton.setBounds (27, 32, getWidth() - 40, 20);
         auto buttons = juce::Rectangle<int> (getWidth() - 82, 8, 72, 18);
         muteButton.setBounds (buttons.removeFromLeft (22));
         buttons.removeFromLeft (3);
@@ -172,6 +216,7 @@ private:
     bool draggingTrack = false;
     juce::String subtitle;
     juce::Label name;
+    InstrumentButton instrumentButton;
     StateButton muteButton { "M", colours::mute, "Stumm" },
                 soloButton { "S", colours::solo, "Solo" },
                 recButton  { "R", colours::record, "Aufnahme bereit" };

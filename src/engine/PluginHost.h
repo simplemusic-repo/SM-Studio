@@ -5,6 +5,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
 #include <map>
 #include <memory>
 
@@ -35,6 +36,14 @@ public:
     void startScan();
     bool isScanning() const { return isThreadRunning(); }
     juce::String getStatusText() const;
+
+    /** Asks the scan to stop after the current plug-in (the list found so far is kept). */
+    void cancelScan() { signalThreadShouldExit(); }
+    bool isCancelling() const { return isThreadRunning() && threadShouldExit(); }
+
+    /** 0..1 while scanning, and the plug-in currently being checked. */
+    float getScanProgress() const noexcept { return scanProgress.load(); }
+    juce::String getScanningName() const;
 
     struct Entry
     {
@@ -87,6 +96,7 @@ private:
     juce::KnownPluginList known;
     mutable juce::CriticalSection statusLock;
     juce::String scanningName;
+    std::atomic<float> scanProgress { 0.0f };
     std::map<ObjectId, Instance> instances;
     double currentRate = 44100.0;
     int currentBlock = 512;

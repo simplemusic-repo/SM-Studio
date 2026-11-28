@@ -64,18 +64,30 @@ juce::String PluginHost::getStatusText() const
     return text;
 }
 
+juce::String PluginHost::getScanningName() const
+{
+    const juce::ScopedLock sl (statusLock);
+    return scanningName;
+}
+
 void PluginHost::run()
 {
+    scanProgress = 0.0f;
+    const auto testDelayMs = juce::SystemStats::getEnvironmentVariable ("SMS_TEST_SCAN_DELAY_MS", "0").getIntValue();
     if (dataFolder != juce::File())
         dataFolder.createDirectory();
 
     const auto pedal = dataFolder != juce::File() ? dataFolder.getChildFile ("scanning.txt") : juce::File();
 
-    for (auto* format : formats.getFormats())
+    const auto formatList = formats.getFormats();
+    const auto numFormats = std::max (1, (int) formatList.size());
+
+    for (int fi = 0; fi < (int) formatList.size(); ++fi)
     {
         if (threadShouldExit())
             break;
 
+        auto* format = formatList[fi];
         juce::PluginDirectoryScanner scanner (known, *format, format->getDefaultLocationsToSearch(), true, pedal, false);
         juce::String name;
 
@@ -85,12 +97,18 @@ void PluginHost::run()
                 const juce::ScopedLock sl (statusLock);
                 scanningName = scanner.getNextPluginFileThatWillBeScanned();
             }
+            scanProgress = ((float) fi + juce::jlimit (0.0f, 1.0f, scanner.getProgress())) / (float) numFormats;
             triggerAsyncUpdate();
 
             if (threadShouldExit() || ! scanner.scanNextFile (true, name))
                 break;
+
+            if (testDelayMs > 0) // only for UI tests (SMS_TEST_SCAN_DELAY_MS)
+                wait (testDelayMs);
         }
     }
+
+    scanProgress = 1.0f;
 
     {
         const juce::ScopedLock sl (statusLock);

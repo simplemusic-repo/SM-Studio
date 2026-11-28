@@ -13,6 +13,7 @@
 #include "extension/ExtensionRegistry.h"
 #include "modules/Modules.h"
 #include "ui/MainComponent.h"
+#include "ui/PluginScanDialog.h"
 #include "ui/PluginWindows.h"
 #include "ui/Theme.h"
 
@@ -182,7 +183,7 @@ public:
 
         // first start: look for installed plug-ins in the background
         if (! AppState::dataFolder().getChildFile ("plugins.xml").existsAsFile())
-            state->plugins.startScan();
+            juce::MessageManager::callAsync ([this] { if (state != nullptr) startPluginScanWithProgress (state->ctx); });
     }
 
     void shutdown() override
