@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "Panels.h"
 
+#include "SongHelpers.h"
 #include "core/Commands.h"
 #include "core/ValueFormat.h"
 #include "extension/ExtensionRegistry.h"
@@ -84,475 +85,8 @@ namespace
         };
         s.onDragEnd = [&ctx] { ctx.history.endGesture(); };
     }
-}
+} // namespace (shared helpers)
 
-//==============================================================================
-// Inspector
-//==============================================================================
-InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
-{
-    nameLabel.setFont (font (15.0f, true));
-    nameLabel.setEditable (false, true, false);
-    nameLabel.setTooltip ("Doppelklick zum Umbenennen");
-    nameLabel.onTextChange = [this]
-    {
-        ctx.perform (std::make_unique<commands::RenameTrack> (shownTrack, nameLabel.getText().trim()));
-    };
-
-    volume.setTooltip (u8"Lautstärke (Doppelklick: 0 dB)");
-    pan.setTooltip ("Panorama (Doppelklick: Mitte)");
-
-    for (auto* l : { &typeLabel, &instrumentLabel })
-    {
-        l->setFont (font (12.5f));
-        l->setColour (juce::Label::textColourId, colours::textDim);
-    }
-    makeValueLabel (volumeValue);
-    makeValueLabel (panValue);
-    volumeValue.setJustificationType (juce::Justification::centred);
-    panValue.setJustificationType (juce::Justification::centred);
-    bindValueLabel (volumeValue, ctx, [this] { return shownTrack; }, Param::volumeDb);
-    bindValueLabel (panValue, ctx, [this] { return shownTrack; }, Param::pan);
-
-    volumeCaption.setText (u8"Lautstärke", juce::dontSendNotification);
-    panCaption.setText ("Panorama", juce::dontSendNotification);
-    for (auto* l : { &volumeCaption, &panCaption })
-        l->setFont (font (12.5f));
-
-    insertsTitle.setText ("Inserts", juce::dontSendNotification);
-    insertsTitle.setFont (font (13.0f, true));
-
-    emptyLabel.setText (u8"Keine Spur ausgewählt", juce::dontSendNotification);
-    emptyLabel.setJustificationType (juce::Justification::centred);
-    emptyLabel.setColour (juce::Label::textColourId, colours::textDim);
-
-    setupVolumeSlider (volume);
-    setupPanSlider (pan);
-    bindTrackSlider (volume, ctx, [this] { return shownTrack; }, Param::volumeDb, true);
-    bindTrackSlider (pan, ctx, [this] { return shownTrack; }, Param::pan, false);
-
-    bindToggle (muteButton, ctx, [this] { return shownTrack; }, Param::mute);
-    bindToggle (soloButton, ctx, [this] { return shownTrack; }, Param::solo);
-
-    for (auto* comp : std::initializer_list<juce::Component*> { &nameLabel, &typeLabel, &instrumentLabel, &volume, &volumeValue, &volumeCaption, &panCaption,
-                                                                &pan, &panValue, &muteButton, &soloButton, &insertsTitle })
-        addChildComponent (comp);
-    addAndMakeVisible (emptyLabel);
-
-    ctx.song.addListener (this);
-    ctx.selection.addListener (this);
-    refresh();
-}
-
-InspectorPanel::~InspectorPanel()
-{
-    ctx.song.removeListener (this);
-    ctx.selection.removeListener (this);
-}
-
-void InspectorPanel::songChanged (const SongChange& c)
-{
-    if (c.what == SongChange::What::reset || c.id == shownTrack || c.what == SongChange::What::trackRemoved)
-        refresh();
-}
-
-void InspectorPanel::selectionChanged() { refresh(); }
-
-void InspectorPanel::refresh()
-{
-    auto* t = ctx.song.findTrack (ctx.selection.getSelectedTrack());
-    shownTrack = t != nullptr ? t->id : ObjectId {};
-
-    const bool has = t != nullptr;
-    for (auto* comp : std::initializer_list<juce::Component*> { &nameLabel, &typeLabel, &volume, &volumeValue, &volumeCaption, &panCaption,
-                                                                &pan, &panValue, &muteButton, &soloButton, &insertsTitle })
-        comp->setVisible (has);
-    emptyLabel.setVisible (! has);
-
-    if (has)
-    {
-        nameLabel.setText (t->name, juce::dontSendNotification);
-        const auto* type = ctx.registry.findTrackType (t->typeId);
-        typeLabel.setText ((type != nullptr ? type->displayName : t->typeId) + "spur", juce::dontSendNotification);
-
-        const bool isInstrument = t->typeId == "instrument";
-        instrumentLabel.setVisible (isInstrument);
-        instrumentLabel.setText ("Instrument: " + (t->instrumentName.isNotEmpty() ? t->instrumentName : juce::String (u8"–")),
-                                 juce::dontSendNotification);
-
-        if (! volume.isMouseButtonDown())
-            volume.setValue (juce::jmax (-60.0, (double) t->volumeDb), juce::dontSendNotification);
-        if (! pan.isMouseButtonDown())
-            pan.setValue (t->pan, juce::dontSendNotification);
-
-        if (! volumeValue.isBeingEdited())
-            volumeValue.setText (formatDb (t->volumeDb), juce::dontSendNotification);
-        if (! panValue.isBeingEdited())
-            panValue.setText (formatPan (t->pan), juce::dontSendNotification);
-        muteButton.setToggleState (t->mute, juce::dontSendNotification);
-        soloButton.setToggleState (t->solo, juce::dontSendNotification);
-    }
-    else
-    {
-        instrumentLabel.setVisible (false);
-    }
-
-    rebuildInserts();
-    resized();
-    repaint();
-}
-
-void InspectorPanel::rebuildInserts()
-{
-    insertRows.clear();
-
-    auto* t = ctx.song.findTrack (shownTrack);
-    if (t == nullptr)
-        return;
-
-    struct InsertRow final : public juce::Component
-    {
-        InsertRow (AppContext& c, ObjectId track, const InsertSlot& slot) : ctx (c), trackId (track), slotId (slot.id)
-        {
-            label.setText (slot.name, juce::dontSendNotification);
-            label.setFont (font (12.5f));
-            addAndMakeVisible (label);
-
-            remove.setTooltip ("Effekt entfernen");
-            // async: removing the insert rebuilds the inspector rows, including this one
-            remove.onClick = [&c = ctx, t = trackId, sl = slotId]
-            {
-                juce::MessageManager::callAsync ([&c, t, sl] { c.perform (std::make_unique<commands::RemoveInsert> (t, sl)); });
-            };
-            addAndMakeVisible (remove);
-        }
-
-        void paint (juce::Graphics& g) override
-        {
-            g.setColour (colours::panelDark);
-            g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 3.0f);
-            g.setColour (colours::accent);
-            g.fillRect (4, 6, 3, getHeight() - 12);
-        }
-
-        void resized() override
-        {
-            auto r = getLocalBounds().reduced (2);
-            remove.setBounds (r.removeFromRight (r.getHeight()));
-            label.setBounds (r.withTrimmedLeft (8));
-        }
-
-        AppContext& ctx;
-        ObjectId trackId, slotId;
-        juce::Label label;
-        juce::TextButton remove { juce::String::fromUTF8 ("\xc3\x97") }; // ×
-    };
-
-    for (auto& slot : t->inserts)
-        addAndMakeVisible (insertRows.add (new InsertRow (ctx, t->id, slot)));
-}
-
-void InspectorPanel::paint (juce::Graphics& g)
-{
-    g.fillAll (colours::panel);
-    drawPanelHeader (g, getLocalBounds().removeFromTop (panelHeaderHeight), "Inspector");
-
-    if (auto* t = ctx.song.findTrack (shownTrack))
-    {
-        g.setColour (t->colour);
-        g.fillRect (8, panelHeaderHeight + 10, 4, 40);
-
-        if (t->inserts.empty())
-        {
-            g.setColour (colours::textDim);
-            g.setFont (font (12.0f));
-            g.drawFittedText ("Effekte aus dem Browser auf die Spur ziehen",
-                              juce::Rectangle<int> (12, insertsTitle.getBottom() + 2, getWidth() - 24, 34),
-                              juce::Justification::topLeft, 2);
-        }
-    }
-
-    g.setColour (colours::border);
-    g.drawVerticalLine (getWidth() - 1, 0.0f, (float) getHeight());
-}
-
-void InspectorPanel::resized()
-{
-    auto r = getLocalBounds().withTrimmedTop (panelHeaderHeight).reduced (10, 8);
-    emptyLabel.setBounds (r.withHeight (60));
-
-    auto top = r.removeFromTop (44).withTrimmedLeft (8);
-    nameLabel.setBounds (top.removeFromTop (24));
-    typeLabel.setBounds (top);
-
-    if (instrumentLabel.isVisible())
-        instrumentLabel.setBounds (r.removeFromTop (22));
-
-    r.removeFromTop (10);
-    auto volRow = r.removeFromTop (18);
-    volumeValue.setBounds (volRow.removeFromRight (72).reduced (0, 0));
-    volumeCaption.setBounds (volRow);
-    volume.setBounds (r.removeFromTop (20));
-
-    r.removeFromTop (8);
-    auto panRow = r.removeFromTop (18);
-    panValue.setBounds (panRow.removeFromRight (72));
-    panCaption.setBounds (panRow);
-    pan.setBounds (r.removeFromTop (20));
-
-    r.removeFromTop (10);
-    auto buttons = r.removeFromTop (26);
-    muteButton.setBounds (buttons.removeFromLeft (34));
-    buttons.removeFromLeft (6);
-    soloButton.setBounds (buttons.removeFromLeft (34));
-
-    r.removeFromTop (16);
-    insertsTitle.setBounds (r.removeFromTop (20));
-    r.removeFromTop (4);
-
-    for (auto* row : insertRows)
-    {
-        row->setBounds (r.removeFromTop (24));
-        r.removeFromTop (3);
-    }
-
-}
-
-//==============================================================================
-// Browser
-//==============================================================================
-BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
-{
-    auto& sources = ctx.registry.getBrowserSources();
-
-    for (size_t i = 0; i < sources.size(); ++i)
-    {
-        auto* b = tabs.add (new juce::TextButton (sources[i]->getTitle()));
-        b->setTooltip (sources[i]->getTitle() + juce::String (u8" anzeigen"));
-        b->setClickingTogglesState (false);
-        b->setWantsKeyboardFocus (false);
-        b->onClick = [this, i] { selectTab ((int) i); };
-        addAndMakeVisible (b);
-
-        sources[i]->onItemsChanged = [safe = juce::Component::SafePointer<BrowserPanel> (this)]
-        {
-            juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->reload(); });
-        };
-    }
-
-    search.setTextToShowWhenEmpty ("Suchen", colours::textDim);
-    search.setTooltip ("Liste filtern");
-    search.setFont (font (13.0f));
-    search.onTextChange = [this] { reload(); };
-    addAndMakeVisible (search);
-
-    list.setRowHeight (24);
-    list.setColour (juce::ListBox::backgroundColourId, colours::panelDark);
-    list.setMultipleSelectionEnabled (false);
-    addAndMakeVisible (list);
-
-    status.setFont (font (11.5f));
-    status.setColour (juce::Label::textColourId, colours::textDim);
-    status.setJustificationType (juce::Justification::topLeft);
-    addAndMakeVisible (status);
-
-    hint.setText (u8"Ziehen oder Doppelklick: ins Arrangement", juce::dontSendNotification);
-    hint.setFont (font (12.0f));
-    hint.setColour (juce::Label::textColourId, colours::textDim);
-    hint.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (hint);
-
-    selectTab (0);
-}
-
-BrowserPanel::~BrowserPanel()
-{
-    for (auto& s : ctx.registry.getBrowserSources())
-        s->onItemsChanged = nullptr;
-}
-
-void BrowserPanel::selectTab (int index)
-{
-    currentTab = index;
-    for (int i = 0; i < tabs.size(); ++i)
-        tabs[i]->setToggleState (i == index, juce::dontSendNotification);
-    reload();
-}
-
-void BrowserPanel::reload()
-{
-    rows.clear();
-    auto& sources = ctx.registry.getBrowserSources();
-
-    // per-source buttons and status line
-    sourceButtons.clear();
-    status.setText ({}, juce::dontSendNotification);
-    if (currentTab >= 0 && currentTab < (int) sources.size())
-    {
-        auto source = sources[(size_t) currentTab];
-        status.setText (source->getStatusText(), juce::dontSendNotification);
-        for (auto& def : source->getButtons())
-        {
-            auto* b = sourceButtons.add (new juce::TextButton (def.text));
-            b->setTooltip (def.tooltip);
-            b->setWantsKeyboardFocus (false);
-            b->onClick = [fn = def.onClick] { if (fn) fn(); };
-            addAndMakeVisible (b);
-        }
-    }
-    resized();
-
-    if (currentTab >= 0 && currentTab < (int) sources.size())
-    {
-        auto items = sources[(size_t) currentTab]->getItems();
-        const auto filter = search.getText().trim();
-
-        std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.category.compareNatural (b.category) < 0; });
-
-        juce::String lastCategory = "\x01";
-        for (auto& item : items)
-        {
-            if (filter.isNotEmpty() && ! item.name.containsIgnoreCase (filter) && ! item.category.containsIgnoreCase (filter))
-                continue;
-
-            if (item.category != lastCategory)
-            {
-                rows.push_back ({ true, item.category, {} });
-                lastCategory = item.category;
-            }
-            rows.push_back ({ false, item.name, item });
-        }
-    }
-
-    list.updateContent();
-    list.repaint();
-}
-
-int BrowserPanel::getNumRows() { return (int) rows.size(); }
-
-void BrowserPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
-{
-    if (row < 0 || row >= (int) rows.size())
-        return;
-
-    auto& r = rows[(size_t) row];
-
-    if (r.isHeader)
-    {
-        g.setColour (colours::panelLight);
-        g.fillRect (0, 0, w, h);
-        g.setColour (colours::textDim);
-        g.setFont (font (12.0f, true));
-        g.drawText (r.text.isEmpty() ? juce::String ("Allgemein") : r.text, 8, 0, w - 16, h, juce::Justification::centredLeft, true);
-        return;
-    }
-
-    if (selected)
-    {
-        g.setColour (colours::accentDim);
-        g.fillRect (0, 0, w, h);
-    }
-
-    auto icon = r.item.kind == "instrument" ? icons::instrument()
-              : r.item.kind == "audiofile"  ? icons::waveform()
-                                            : icons::rangeTool();
-    if (r.item.kind == "effect")
-    {
-        icon.clear();
-        icon.addEllipse (2.0f, 2.0f, 6.0f, 6.0f);
-    }
-
-    g.setColour (colours::textDim);
-    g.fillPath (icon, icon.getTransformToScaleToFit (juce::Rectangle<float> (14.0f, 5.0f, 14.0f, (float) h - 10.0f), true));
-    g.setColour (colours::text);
-    g.setFont (font (13.0f));
-    g.drawText (r.text, 36, 0, w - 42, h, juce::Justification::centredLeft, true);
-}
-
-juce::var BrowserPanel::getDragSourceDescription (const juce::SparseSet<int>& selected)
-{
-    if (selected.size() == 1)
-    {
-        const auto row = selected[0];
-        if (row >= 0 && row < (int) rows.size() && ! rows[(size_t) row].isHeader)
-            return rows[(size_t) row].item.toDragDescription();
-    }
-    return {};
-}
-
-void BrowserPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
-{
-    // double click: same as dropping onto the selected track (or a new track)
-    if (row < 0 || row >= (int) rows.size() || rows[(size_t) row].isHeader)
-        return;
-
-    auto& item = rows[(size_t) row].item;
-    if (auto* handler = ctx.registry.findDropHandler (item.kind))
-    {
-        DropTarget target;
-        const auto selected = ctx.selection.getSelectedTrack();
-        // audio files get their own new track (below the selected one);
-        // instruments/effects act on the selected track
-        if (item.kind != "audiofile")
-            target.trackId = selected;
-        const auto idx = ctx.song.indexOfTrack (selected);
-        target.insertIndex = idx >= 0 ? idx + 1 : ctx.song.getNumTracks();
-        target.position = ctx.edit.snapTick (ctx.song.getTempoMap().secondsToTicks (ctx.engine.getPositionSeconds()),
-                                             ctx.song.getTempoMap());
-        handler->drop (ctx, item, target);
-    }
-}
-
-juce::String BrowserPanel::getTooltipForRow (int row)
-{
-    if (row >= 0 && row < (int) rows.size() && rows[(size_t) row].item.kind == "audiofile")
-        return rows[(size_t) row].item.id;
-    return {};
-}
-
-void BrowserPanel::paint (juce::Graphics& g)
-{
-    g.fillAll (colours::panel);
-    drawPanelHeader (g, getLocalBounds().removeFromTop (panelHeaderHeight), "Browser");
-    g.setColour (colours::border);
-    g.drawVerticalLine (0, 0.0f, (float) getHeight());
-}
-
-void BrowserPanel::resized()
-{
-    auto r = getLocalBounds().withTrimmedTop (panelHeaderHeight).reduced (8, 8);
-
-    auto tabRow = r.removeFromTop (26);
-    const auto tabW = tabs.isEmpty() ? 0 : tabRow.getWidth() / tabs.size();
-    for (auto* t : tabs)
-        t->setBounds (tabRow.removeFromLeft (tabW).reduced (1, 0));
-
-    r.removeFromTop (8);
-    search.setBounds (r.removeFromTop (26));
-    r.removeFromTop (6);
-
-    if (! sourceButtons.isEmpty())
-    {
-        auto row = r.removeFromTop (24);
-        for (auto* b : sourceButtons)
-        {
-            b->setBounds (row.removeFromLeft (juce::jmin (110, row.getWidth())));
-            row.removeFromLeft (4);
-        }
-        r.removeFromTop (4);
-    }
-
-    if (status.getText().isNotEmpty())
-        status.setBounds (r.removeFromTop (30));
-    else
-        status.setBounds ({});
-
-    hint.setBounds (r.removeFromBottom (22));
-    list.setBounds (r);
-}
-
-//==============================================================================
-// Console
 //==============================================================================
 /** Insert slots of one channel: click a slot for bypass/remove, an empty slot
     to add an effect; effects can also be dropped from the browser. */
@@ -561,13 +95,15 @@ class InsertsBox final : public juce::Component,
                          public juce::SettableTooltipClient
 {
 public:
-    InsertsBox (AppContext& c, ObjectId track) : ctx (c), trackId (track)
+    InsertsBox (AppContext& c, ObjectId track, int slots = 3) : ctx (c), trackId (track), numSlots (slots)
     {
         setTooltip (u8"Inserts: Effekt hierher ziehen oder Klick auf + / auf einen Effekt");
     }
 
-    static constexpr int numSlots = 3, slotHeight = 16, titleHeight = 14;
-    static int preferredHeight() { return titleHeight + numSlots * slotHeight + 2; }
+    static constexpr int slotHeight = 16, titleHeight = 14;
+    int preferredHeight() const { return titleHeight + numSlots * slotHeight + 2; }
+
+    void setTrack (ObjectId id) { trackId = id; repaint(); }
 
     void paint (juce::Graphics& g) override
     {
@@ -689,13 +225,33 @@ public:
 private:
     AppContext& ctx;
     ObjectId trackId;
+    int numSlots;
     bool dropHover = false;
 };
 
-class ConsolePanel::Strip final : public juce::Component
+/** Sends area: arrives together with buses (stage 5). */
+static void drawSendsPlaceholder (juce::Graphics& g, juce::Rectangle<int> r)
+{
+    g.setColour (colours::textDim);
+    g.setFont (font (10.5f, true));
+    g.drawText ("SENDS", r.removeFromTop (14), juce::Justification::centredLeft);
+    g.setColour (colours::panelDark);
+    g.fillRoundedRectangle (r.toFloat(), 3.0f);
+    g.setColour (colours::textDim.withAlpha (0.6f));
+    g.setFont (font (10.5f));
+    g.drawFittedText ("folgt mit Bussen", r.reduced (2), juce::Justification::centred, 2);
+}
+
+
+
+//==============================================================================
+/** One mixer channel: inserts, sends, pan, mute/solo, fader. Used by the
+    console (one per track) and by the inspector (for the selected track). */
+class ChannelStrip final : public juce::Component
 {
 public:
-    Strip (AppContext& c, ObjectId id) : ctx (c), trackId (id)
+    ChannelStrip (AppContext& c, ObjectId id, int insertSlots = 3, bool showNameBar = true)
+        : ctx (c), trackId (id), inserts (c, id, insertSlots), nameBar (showNameBar)
     {
         setupVolumeSlider (fader);
         fader.setSliderStyle (juce::Slider::LinearVertical);
@@ -732,6 +288,13 @@ public:
 
     ObjectId getTrackId() const noexcept { return trackId; }
 
+    void setTrack (ObjectId id)
+    {
+        trackId = id;
+        inserts.setTrack (id);
+        update();
+    }
+
     void update()
     {
         if (auto* t = ctx.song.findTrack (trackId))
@@ -755,39 +318,32 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        const bool selected = ctx.selection.getSelectedTrack() == trackId;
+        const bool selected = nameBar && ctx.selection.getSelectedTrack() == trackId;
         g.setColour (selected ? colours::laneSelected.brighter (0.05f) : colours::panelLight);
         g.fillRect (getLocalBounds().reduced (1, 0));
 
-        // sends: arrive together with buses (stage 5)
         if (! sendsArea.isEmpty())
+            drawSendsPlaceholder (g, sendsArea);
+
+        if (nameBar)
         {
-            auto r = sendsArea;
-            g.setColour (colours::textDim);
-            g.setFont (font (10.5f, true));
-            g.drawText ("SENDS", r.removeFromTop (14), juce::Justification::centredLeft);
-            g.setColour (colours::panelDark);
-            g.fillRoundedRectangle (r.toFloat(), 3.0f);
-            g.setColour (colours::textDim.withAlpha (0.6f));
-            g.setFont (font (10.5f));
-            g.drawFittedText ("folgt mit Bussen", r.reduced (2), juce::Justification::centred, 2);
+            auto nameArea = getLocalBounds().removeFromBottom (24).reduced (1, 0);
+            g.setColour (colour);
+            g.fillRect (nameArea);
+            g.setColour (colours::textDark);
+            g.setFont (font (12.0f, true));
+            g.drawFittedText (name, nameArea.reduced (3, 0), juce::Justification::centred, 1, 0.8f);
+
+            g.setColour (colours::border);
+            g.drawVerticalLine (getWidth() - 1, 0.0f, (float) getHeight());
         }
-
-        auto nameArea = getLocalBounds().removeFromBottom (24).reduced (1, 0);
-        g.setColour (colour);
-        g.fillRect (nameArea);
-        g.setColour (colours::textDark);
-        g.setFont (font (12.0f, true));
-        g.drawFittedText (name, nameArea.reduced (3, 0), juce::Justification::centred, 1, 0.8f);
-
-        g.setColour (colours::border);
-        g.drawVerticalLine (getWidth() - 1, 0.0f, (float) getHeight());
     }
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (6, 6);
-        r.removeFromBottom (24);
+        if (nameBar)
+            r.removeFromBottom (24);
 
         // inserts and sends only when there is enough height for a usable fader
         const bool roomy = r.getHeight() > 300;
@@ -795,7 +351,7 @@ public:
         sendsArea = {};
         if (roomy)
         {
-            inserts.setBounds (r.removeFromTop (InsertsBox::preferredHeight()));
+            inserts.setBounds (r.removeFromTop (inserts.preferredHeight()));
             r.removeFromTop (4);
             sendsArea = r.removeFromTop (14 + 20);
             r.removeFromTop (6);
@@ -804,16 +360,18 @@ public:
         // pan knob with its value next to it
         auto panRow = r.removeFromTop (30);
         panKnob.setBounds (panRow.removeFromLeft (30));
-        panValue.setBounds (panRow.withSizeKeepingCentre (panRow.getWidth() - 4, 17));
+        panValue.setBounds (panRow.withSizeKeepingCentre (juce::jmin (70, panRow.getWidth() - 4), 17));
         r.removeFromTop (4);
 
         auto buttons = r.removeFromTop (20);
+        if (buttons.getWidth() > 100)
+            buttons = buttons.withSizeKeepingCentre (100, buttons.getHeight());
         mute.setBounds (buttons.removeFromLeft (buttons.getWidth() / 2 - 1));
         buttons.removeFromLeft (2);
         solo.setBounds (buttons);
         value.setBounds (r.removeFromBottom (18).withSizeKeepingCentre (68, 17));
         r.removeFromBottom (3);
-        fader.setBounds (r.reduced (0, 2));
+        fader.setBounds (r.reduced (0, 2).withSizeKeepingCentre (juce::jmin (r.getWidth(), 90), r.getHeight() - 4));
     }
 
     void mouseDown (const juce::MouseEvent&) override { ctx.selection.selectTrack (trackId); }
@@ -824,12 +382,468 @@ private:
     juce::Slider fader, panKnob;
     StateButton mute { "M", colours::mute, "Stumm" }, solo { "S", colours::solo, "Solo" };
     juce::Label value, panValue;
-    InsertsBox inserts { ctx, trackId };
+    InsertsBox inserts;
+    bool nameBar;
     juce::Rectangle<int> sendsArea;
     juce::String name;
     juce::Colour colour;
 };
 
+
+//==============================================================================
+// Inspector
+//==============================================================================
+InspectorPanel::InspectorPanel (AppContext& c) : ctx (c)
+{
+    nameLabel.setFont (font (15.0f, true));
+    nameLabel.setEditable (false, true, false);
+    nameLabel.setTooltip ("Doppelklick zum Umbenennen");
+    nameLabel.onTextChange = [this]
+    {
+        ctx.perform (std::make_unique<commands::RenameTrack> (shownTrack, nameLabel.getText().trim()));
+    };
+
+    for (auto* l : { &typeLabel, &instrumentLabel })
+    {
+        l->setFont (font (12.5f));
+        l->setColour (juce::Label::textColourId, colours::textDim);
+    }
+    instrumentLabel.setColour (juce::Label::textColourId, colours::text);
+
+    openButton.setTooltip (u8"Instrument öffnen (Plug-in-Fenster, ab Etappe 3)");
+    openButton.setEnabled (false);
+
+    auto setupStepper = [this] (juce::Slider& s, double lo, double hi, Param p, const juce::String& tip)
+    {
+        s.setSliderStyle (juce::Slider::IncDecButtons);
+        s.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 44, 20);
+        s.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Vertical);
+        s.setRange (lo, hi, 1.0);
+        s.setTooltip (tip);
+        s.onValueChange = [this, &s, p]
+        {
+            ctx.perform (std::make_unique<commands::SetTrackParam> (shownTrack, p, (float) s.getValue()), true);
+        };
+        s.onDragEnd = [this] { ctx.history.endGesture(); };
+    };
+    setupStepper (transpose, -48, 48, Param::transpose, u8"Transponieren in Halbtönen (wirkt ab der MIDI-Wiedergabe)");
+    setupStepper (velocity, -127, 127, Param::velocityOffset, u8"Anschlagstärke anheben/absenken (wirkt ab der MIDI-Wiedergabe)");
+
+    arpButton.setTooltip (u8"Arpeggiator (folgt)");
+    arpButton.setEnabled (false);
+    midiFxButton.setTooltip ("MIDI-Effekte (folgt)");
+    midiFxButton.setEnabled (false);
+
+    for (auto* l : { &transposeCaption, &velocityCaption, &arpCaption, &midiFxCaption })
+    {
+        l->setFont (font (12.5f));
+        l->setColour (juce::Label::textColourId, colours::textDim);
+    }
+    transposeCaption.setText ("Transponieren", juce::dontSendNotification);
+    velocityCaption.setText ("Anschlag", juce::dontSendNotification);
+    arpCaption.setText ("Arpeggiator", juce::dontSendNotification);
+    midiFxCaption.setText ("MIDI-FX", juce::dontSendNotification);
+
+    emptyLabel.setText (u8"Keine Spur ausgewählt", juce::dontSendNotification);
+    emptyLabel.setJustificationType (juce::Justification::centred);
+    emptyLabel.setColour (juce::Label::textColourId, colours::textDim);
+
+    strip = std::make_unique<ChannelStrip> (ctx, ObjectId {}, 6, false);
+
+    for (auto* comp : std::initializer_list<juce::Component*> { &nameLabel, &typeLabel, strip.get() })
+        addChildComponent (comp);
+    for (auto* comp : instrumentComponents())
+        addChildComponent (comp);
+    addAndMakeVisible (emptyLabel);
+
+    ctx.song.addListener (this);
+    ctx.selection.addListener (this);
+    refresh();
+}
+
+InspectorPanel::~InspectorPanel()
+{
+    ctx.song.removeListener (this);
+    ctx.selection.removeListener (this);
+}
+
+std::vector<juce::Component*> InspectorPanel::instrumentComponents()
+{
+    return { &instrumentLabel, &openButton, &transpose, &velocity, &arpButton, &midiFxButton,
+             &transposeCaption, &velocityCaption, &arpCaption, &midiFxCaption };
+}
+
+void InspectorPanel::songChanged (const SongChange& c)
+{
+    if (c.what == SongChange::What::reset || c.id == shownTrack || c.what == SongChange::What::trackRemoved)
+        refresh();
+}
+
+void InspectorPanel::selectionChanged() { refresh(); }
+
+void InspectorPanel::refresh()
+{
+    auto* t = ctx.song.findTrack (ctx.selection.getSelectedTrack());
+    const auto newTrack = t != nullptr ? t->id : ObjectId {};
+
+    if (newTrack != shownTrack)
+    {
+        shownTrack = newTrack;
+        strip->setTrack (shownTrack);
+    }
+    else
+    {
+        strip->update();
+    }
+
+    const bool has = t != nullptr;
+    isInstrument = has && t->typeId == "instrument";
+
+    nameLabel.setVisible (has);
+    typeLabel.setVisible (has);
+    strip->setVisible (has);
+    emptyLabel.setVisible (! has);
+    for (auto* comp : instrumentComponents())
+        comp->setVisible (isInstrument);
+
+    if (has)
+    {
+        nameLabel.setText (t->name, juce::dontSendNotification);
+        const auto* type = ctx.registry.findTrackType (t->typeId);
+        typeLabel.setText ((type != nullptr ? type->displayName : t->typeId) + "spur", juce::dontSendNotification);
+        instrumentLabel.setText (t->instrumentName.isNotEmpty() ? t->instrumentName : juce::String ("Kein Instrument"),
+                                 juce::dontSendNotification);
+
+        if (! transpose.isMouseButtonDown())
+            transpose.setValue (t->transpose, juce::dontSendNotification);
+        if (! velocity.isMouseButtonDown())
+            velocity.setValue (t->velocityOffset, juce::dontSendNotification);
+    }
+
+    resized();
+    repaint();
+}
+
+void InspectorPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (colours::panel);
+    drawPanelHeader (g, getLocalBounds().removeFromTop (panelHeaderHeight), "Inspector");
+
+    if (auto* t = ctx.song.findTrack (shownTrack))
+    {
+        g.setColour (t->colour);
+        g.fillRect (8, panelHeaderHeight + 10, 4, 40);
+
+        if (isInstrument && ! instrumentArea.isEmpty())
+        {
+            g.setColour (colours::panelDark);
+            g.fillRoundedRectangle (instrumentArea.toFloat(), 4.0f);
+            g.setColour (colours::textDim);
+            g.setFont (font (10.5f, true));
+            g.drawText ("INSTRUMENT", instrumentArea.reduced (8, 4).removeFromTop (14), juce::Justification::centredLeft);
+        }
+
+        // separator above the channel strip
+        g.setColour (colours::separator);
+        g.drawHorizontalLine (strip->getY() - 4, 10.0f, (float) getWidth() - 10.0f);
+    }
+
+    g.setColour (colours::border);
+    g.drawVerticalLine (getWidth() - 1, 0.0f, (float) getHeight());
+}
+
+void InspectorPanel::resized()
+{
+    auto r = getLocalBounds().withTrimmedTop (panelHeaderHeight).reduced (8, 8);
+    emptyLabel.setBounds (r.withHeight (60));
+
+    auto top = r.removeFromTop (44).withTrimmedLeft (10);
+    nameLabel.setBounds (top.removeFromTop (24));
+    typeLabel.setBounds (top);
+    r.removeFromTop (8);
+
+    instrumentArea = {};
+    if (isInstrument)
+    {
+        constexpr int rowH = 24;
+        instrumentArea = r.removeFromTop (14 + 6 + rowH * 5 + 10);
+        auto a = instrumentArea.reduced (8, 4);
+        a.removeFromTop (16);
+
+        auto row = a.removeFromTop (rowH);
+        openButton.setBounds (row.removeFromRight (70).reduced (0, 1));
+        instrumentLabel.setBounds (row);
+
+        auto addRow = [&a] (juce::Label& caption, juce::Component& c)
+        {
+            a.removeFromTop (2);
+            auto rr = a.removeFromTop (rowH - 2);
+            caption.setBounds (rr.removeFromLeft (96));
+            c.setBounds (rr);
+        };
+        addRow (transposeCaption, transpose);
+        addRow (velocityCaption, velocity);
+        addRow (arpCaption, arpButton);
+        addRow (midiFxCaption, midiFxButton);
+        r.removeFromTop (10);
+    }
+
+    r.removeFromTop (6);
+    strip->setBounds (r);
+}
+
+//==============================================================================
+// Browser
+//==============================================================================
+BrowserPanel::BrowserPanel (AppContext& c) : ctx (c)
+{
+    auto& sources = ctx.registry.getBrowserSources();
+
+    for (size_t i = 0; i < sources.size(); ++i)
+    {
+        auto* b = tabs.add (new juce::TextButton (sources[i]->getTitle()));
+        b->setTooltip (sources[i]->getTitle() + juce::String (u8" anzeigen"));
+        b->setClickingTogglesState (false);
+        b->setWantsKeyboardFocus (false);
+        b->onClick = [this, i] { selectTab ((int) i); };
+        addAndMakeVisible (b);
+
+        sources[i]->onItemsChanged = [safe = juce::Component::SafePointer<BrowserPanel> (this)]
+        {
+            juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->reload(); });
+        };
+    }
+
+    search.setTextToShowWhenEmpty ("Suchen", colours::textDim);
+    search.setTooltip ("Liste filtern");
+    search.setFont (font (13.0f));
+    search.onTextChange = [this] { reload(); };
+    addAndMakeVisible (search);
+
+    list.setRowHeight (24);
+    list.setColour (juce::ListBox::backgroundColourId, colours::panelDark);
+    list.setMultipleSelectionEnabled (false);
+    addAndMakeVisible (list);
+
+    status.setFont (font (11.5f));
+    status.setColour (juce::Label::textColourId, colours::textDim);
+    status.setJustificationType (juce::Justification::topLeft);
+    addAndMakeVisible (status);
+
+    hint.setText (u8"Ziehen oder Doppelklick: ins Arrangement", juce::dontSendNotification);
+    hint.setFont (font (12.0f));
+    hint.setColour (juce::Label::textColourId, colours::textDim);
+    hint.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (hint);
+
+    selectTab (0);
+}
+
+BrowserPanel::~BrowserPanel()
+{
+    for (auto& s : ctx.registry.getBrowserSources())
+        s->onItemsChanged = nullptr;
+}
+
+void BrowserPanel::selectTab (int index)
+{
+    currentTab = index;
+    for (int i = 0; i < tabs.size(); ++i)
+        tabs[i]->setToggleState (i == index, juce::dontSendNotification);
+
+    // sources with their own view (e.g. the folder tree) replace the list
+    if (activeView != nullptr)
+        activeView->setVisible (false);
+    activeView = nullptr;
+
+    auto& sources = ctx.registry.getBrowserSources();
+    if (index >= 0 && index < (int) sources.size())
+    {
+        auto it = customViews.find (index);
+        if (it == customViews.end())
+            it = customViews.emplace (index, sources[(size_t) index]->createView (ctx)).first;
+
+        if (it->second != nullptr)
+        {
+            activeView = it->second.get();
+            addAndMakeVisible (activeView);
+        }
+    }
+
+    for (auto* c : std::initializer_list<juce::Component*> { &search, &list, &hint, &status })
+        c->setVisible (activeView == nullptr);
+
+    reload();
+}
+
+void BrowserPanel::reload()
+{
+    rows.clear();
+    auto& sources = ctx.registry.getBrowserSources();
+
+    // per-source buttons and status line
+    sourceButtons.clear();
+    status.setText ({}, juce::dontSendNotification);
+    if (currentTab >= 0 && currentTab < (int) sources.size())
+    {
+        auto source = sources[(size_t) currentTab];
+        status.setText (source->getStatusText(), juce::dontSendNotification);
+        for (auto& def : source->getButtons())
+        {
+            auto* b = sourceButtons.add (new juce::TextButton (def.text));
+            b->setTooltip (def.tooltip);
+            b->setWantsKeyboardFocus (false);
+            b->onClick = [fn = def.onClick] { if (fn) fn(); };
+            addAndMakeVisible (b);
+        }
+    }
+    resized();
+
+    if (currentTab >= 0 && currentTab < (int) sources.size())
+    {
+        auto items = sources[(size_t) currentTab]->getItems();
+        const auto filter = search.getText().trim();
+
+        std::stable_sort (items.begin(), items.end(), [] (auto& a, auto& b) { return a.category.compareNatural (b.category) < 0; });
+
+        juce::String lastCategory = "\x01";
+        for (auto& item : items)
+        {
+            if (filter.isNotEmpty() && ! item.name.containsIgnoreCase (filter) && ! item.category.containsIgnoreCase (filter))
+                continue;
+
+            if (item.category != lastCategory)
+            {
+                rows.push_back ({ true, item.category, {} });
+                lastCategory = item.category;
+            }
+            rows.push_back ({ false, item.name, item });
+        }
+    }
+
+    list.updateContent();
+    list.repaint();
+}
+
+int BrowserPanel::getNumRows() { return (int) rows.size(); }
+
+void BrowserPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
+{
+    if (row < 0 || row >= (int) rows.size())
+        return;
+
+    auto& r = rows[(size_t) row];
+
+    if (r.isHeader)
+    {
+        g.setColour (colours::panelLight);
+        g.fillRect (0, 0, w, h);
+        g.setColour (colours::textDim);
+        g.setFont (font (12.0f, true));
+        g.drawText (r.text.isEmpty() ? juce::String ("Allgemein") : r.text, 8, 0, w - 16, h, juce::Justification::centredLeft, true);
+        return;
+    }
+
+    if (selected)
+    {
+        g.setColour (colours::accentDim);
+        g.fillRect (0, 0, w, h);
+    }
+
+    auto icon = r.item.kind == "instrument" ? icons::instrument()
+              : r.item.kind == "audiofile"  ? icons::waveform()
+                                            : icons::rangeTool();
+    if (r.item.kind == "effect")
+    {
+        icon.clear();
+        icon.addEllipse (2.0f, 2.0f, 6.0f, 6.0f);
+    }
+
+    g.setColour (colours::textDim);
+    g.fillPath (icon, icon.getTransformToScaleToFit (juce::Rectangle<float> (14.0f, 5.0f, 14.0f, (float) h - 10.0f), true));
+    g.setColour (colours::text);
+    g.setFont (font (13.0f));
+    g.drawText (r.text, 36, 0, w - 42, h, juce::Justification::centredLeft, true);
+}
+
+juce::var BrowserPanel::getDragSourceDescription (const juce::SparseSet<int>& selected)
+{
+    if (selected.size() == 1)
+    {
+        const auto row = selected[0];
+        if (row >= 0 && row < (int) rows.size() && ! rows[(size_t) row].isHeader)
+            return rows[(size_t) row].item.toDragDescription();
+    }
+    return {};
+}
+
+void BrowserPanel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
+{
+    // double click: same as dropping onto the selected track (or a new track)
+    if (row < 0 || row >= (int) rows.size() || rows[(size_t) row].isHeader)
+        return;
+
+    activateBrowserItem (ctx, rows[(size_t) row].item);
+}
+
+juce::String BrowserPanel::getTooltipForRow (int row)
+{
+    if (row >= 0 && row < (int) rows.size() && rows[(size_t) row].item.kind == "audiofile")
+        return rows[(size_t) row].item.id;
+    return {};
+}
+
+void BrowserPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (colours::panel);
+    drawPanelHeader (g, getLocalBounds().removeFromTop (panelHeaderHeight), "Browser");
+    g.setColour (colours::border);
+    g.drawVerticalLine (0, 0.0f, (float) getHeight());
+}
+
+void BrowserPanel::resized()
+{
+    auto r = getLocalBounds().withTrimmedTop (panelHeaderHeight).reduced (8, 8);
+
+    auto tabRow = r.removeFromTop (26);
+    const auto tabW = tabs.isEmpty() ? 0 : tabRow.getWidth() / tabs.size();
+    for (auto* t : tabs)
+        t->setBounds (tabRow.removeFromLeft (tabW).reduced (1, 0));
+
+    r.removeFromTop (8);
+
+    if (activeView != nullptr)
+    {
+        activeView->setBounds (r);
+        return;
+    }
+
+    search.setBounds (r.removeFromTop (26));
+    r.removeFromTop (6);
+
+    if (! sourceButtons.isEmpty())
+    {
+        auto row = r.removeFromTop (24);
+        for (auto* b : sourceButtons)
+        {
+            b->setBounds (row.removeFromLeft (juce::jmin (110, row.getWidth())));
+            row.removeFromLeft (4);
+        }
+        r.removeFromTop (4);
+    }
+
+    if (status.getText().isNotEmpty())
+        status.setBounds (r.removeFromTop (30));
+    else
+        status.setBounds ({});
+
+    hint.setBounds (r.removeFromBottom (22));
+    list.setBounds (r);
+}
+
+//==============================================================================
+// Console
+//==============================================================================
 class ConsolePanel::MasterStrip final : public juce::Component
 {
 public:
@@ -941,7 +955,7 @@ void ConsolePanel::rebuild()
 {
     strips.clear();
     for (auto& t : ctx.song.getTracks())
-        stripHolder.addAndMakeVisible (strips.add (new Strip (ctx, t.id)));
+        stripHolder.addAndMakeVisible (strips.add (new ChannelStrip (ctx, t.id)));
     resized();
 }
 

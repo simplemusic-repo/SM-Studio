@@ -4,10 +4,16 @@
 #include "extension/ExtensionApi.h"
 #include "Theme.h"
 
+#include <map>
+
 namespace sms
 {
 
-/** Left panel: properties of the selected track. */
+class InsertsBox;
+class ChannelStrip;
+
+/** Left panel: the selected track. Instrument settings on top (instrument
+    tracks only), below a complete channel strip like in the console. */
 class InspectorPanel final : public juce::Component,
                              private Song::Listener,
                              private Selection::Listener
@@ -23,17 +29,18 @@ private:
     void songChanged (const SongChange&) override;
     void selectionChanged() override;
     void refresh();
-    void rebuildInserts();
+    std::vector<juce::Component*> instrumentComponents();
 
     AppContext& ctx;
     ObjectId shownTrack;
+    bool isInstrument = false;
 
-    juce::Label nameLabel, typeLabel, instrumentLabel, volumeCaption, volumeValue, panCaption, panValue, insertsTitle, emptyLabel;
-    juce::Slider volume { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
-    juce::Slider pan { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
-    theme::StateButton muteButton { "M", theme::colours::mute, "Stumm" },
-                       soloButton { "S", theme::colours::solo, "Solo" };
-    juce::OwnedArray<juce::Component> insertRows;
+    juce::Label nameLabel, typeLabel, instrumentLabel, emptyLabel;
+    juce::Label transposeCaption, velocityCaption, arpCaption, midiFxCaption;
+    juce::TextButton openButton { u8"Öffnen" }, arpButton { "Aus" }, midiFxButton { "folgt" };
+    juce::Slider transpose, velocity;
+    juce::Rectangle<int> instrumentArea;
+    std::unique_ptr<ChannelStrip> strip;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InspectorPanel)
 };
@@ -73,6 +80,8 @@ private:
     juce::ListBox list { "browser", this };
     juce::Label hint, status;
     juce::OwnedArray<juce::TextButton> sourceButtons;
+    std::map<int, std::unique_ptr<juce::Component>> customViews; // per tab, created on first use
+    juce::Component* activeView = nullptr;
     int currentTab = 0;
     std::vector<Row> rows;
 
@@ -99,13 +108,12 @@ private:
     void timerCallback() override;
     void rebuild();
 
-    class Strip;
     class MasterStrip;
 
     AppContext& ctx;
     juce::Viewport viewport;
     juce::Component stripHolder;
-    juce::OwnedArray<Strip> strips;
+    juce::OwnedArray<ChannelStrip> strips;
     std::unique_ptr<MasterStrip> master;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConsolePanel)

@@ -188,6 +188,61 @@ namespace
 }
 
 //==============================================================================
+/** Row of tool buttons shown at the top of the right-click menu (like the toolbar). */
+class ToolMenuRow final : public juce::PopupMenu::CustomComponent
+{
+public:
+    explicit ToolMenuRow (AppContext& c) : juce::PopupMenu::CustomComponent (false), ctx (c)
+    {
+        const std::pair<juce::String, juce::Path> defs[] = {
+            { "Pfeil (1)", icons::arrowTool() }, { "Bereich (2)", icons::rangeTool() },
+            { "Teilen (3)", icons::splitTool() }, { "Radiergummi (4)", icons::eraserTool() },
+            { "Stift (5)", icons::pencilTool() }, { "Stummschalten (6)", icons::muteTool() },
+        };
+
+        const int current = ctx.edit.tool.getValue();
+        for (int i = 0; i < (int) std::size (defs); ++i)
+        {
+            auto* b = buttons.add (new IconButton (defs[i].first, defs[i].second));
+            b->setToggleState (i == current, juce::dontSendNotification);
+            b->onClick = [this, i] { ctx.edit.tool = i; triggerMenuItem(); };
+            addAndMakeVisible (b);
+        }
+
+        auto* undo = buttons.add (new IconButton (u8"Rückgängig", icons::undo()));
+        undo->setEnabled (ctx.history.canUndo());
+        undo->onClick = [this] { triggerMenuItem(); ctx.registry.invoke ("edit.undo"); };
+        addAndMakeVisible (undo);
+
+        auto* redo = buttons.add (new IconButton ("Wiederherstellen", icons::redo()));
+        redo->setEnabled (ctx.history.canRedo());
+        redo->onClick = [this] { triggerMenuItem(); ctx.registry.invoke ("edit.redo"); };
+        addAndMakeVisible (redo);
+    }
+
+    void getIdealSize (int& w, int& h) override
+    {
+        w = buttons.size() * 30 + 12 + 14;
+        h = 34;
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (6, 3);
+        for (int i = 0; i < buttons.size(); ++i)
+        {
+            if (i == 6)
+                r.removeFromLeft (12); // gap before undo / redo
+            buttons[i]->setBounds (r.removeFromLeft (30).reduced (1, 0));
+        }
+    }
+
+private:
+    AppContext& ctx;
+    juce::OwnedArray<IconButton> buttons;
+};
+
+//==============================================================================
 ArrangeView::ArrangeView (AppContext& c) : ctx (c)
 {
     headerColumn = std::make_unique<ClipComponent>();
@@ -1288,6 +1343,10 @@ void ArrangeView::showContextMenu (Tick mouseTick)
     };
 
     constexpr int splitHere = 2000;
+
+    // tools at the top, like the toolbar
+    m.addCustomItem (4000, std::make_unique<ToolMenuRow> (ctx), nullptr, "Werkzeuge");
+    m.addSeparator();
 
     if (hasEvents)
     {

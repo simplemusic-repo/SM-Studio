@@ -34,7 +34,10 @@ ziehen = verschieben, Alt+Ziehen = kopieren, Ränder ziehen = Länge ändern, Um
 Leere Fläche ziehen = Auswahlrahmen. Lineal oben ziehen = Loop-Bereich, unten klicken = Abspielposition.
 Spurkopf hoch/runter ziehen = Spur umsortieren. Rechtsklick auf Events = Menü (teilen, zusammenfügen, kopieren …).
 Konsole, Inspector und Browser lassen sich an ihrem Rand stufenlos vergrößern. Das Raster „Adaptiv“ passt sich dem Zoom an.
-Im Browser unter „Dateien“ lässt sich mit „Ordner …“ der Ordner mit den eigenen Audiodateien wählen.
+Im Browser unter „Dateien“ navigiert man wie im Explorer/Finder durch die Ordner (Musik, Desktop, Laufwerke);
+geöffnete Ordner werden beim nächsten Start wiederhergestellt. Rechtsklick im Arrangement zeigt oben die Werkzeuge.
+Der Inspector zeigt für die ausgewählte Spur einen kompletten Kanalzug (Inserts, Sends, Panorama, Fader),
+bei Instrumentenspuren darüber die Instrument-Einstellungen (Transponieren, Anschlag; Arpeggiator und MIDI-FX folgen).
 
 ## Tastaturkürzel
 

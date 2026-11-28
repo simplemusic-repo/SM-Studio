@@ -93,6 +93,8 @@ float SetTrackParam::get (const Track& t, Param p)
         case Param::mute:     return t.mute ? 1.0f : 0.0f;
         case Param::solo:     return t.solo ? 1.0f : 0.0f;
         case Param::armed:    return t.armed ? 1.0f : 0.0f;
+        case Param::transpose:      return (float) t.transpose;
+        case Param::velocityOffset: return (float) t.velocityOffset;
     }
     return 0.0f;
 }
@@ -106,6 +108,8 @@ void SetTrackParam::set (Track& t, Param p, float v)
         case Param::mute:     t.mute = v >= 0.5f; break;
         case Param::solo:     t.solo = v >= 0.5f; break;
         case Param::armed:    t.armed = v >= 0.5f; break;
+        case Param::transpose:      t.transpose = juce::jlimit (-48, 48, juce::roundToInt (v)); break;
+        case Param::velocityOffset: t.velocityOffset = juce::jlimit (-127, 127, juce::roundToInt (v)); break;
     }
 }
 
@@ -118,6 +122,8 @@ juce::String SetTrackParam::getName() const
         case Param::mute:     return "Stummschaltung";
         case Param::solo:     return "Solo";
         case Param::armed:    return "Aufnahmebereitschaft";
+        case Param::transpose:      return "Transponieren";
+        case Param::velocityOffset: return u8"Anschlagstärke";
     }
     return {};
 }

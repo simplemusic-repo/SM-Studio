@@ -170,6 +170,10 @@ public:
     };
     virtual std::vector<Button> getButtons() { return {}; }
 
+    /** Optional own view instead of the standard list (e.g. a folder tree).
+        Items in it should be draggable with BrowserItem::toDragDescription(). */
+    virtual std::unique_ptr<juce::Component> createView (AppContext&) { return nullptr; }
+
     /** Sources call this when their item list changed (e.g. after a plug-in scan). */
     std::function<void()> onItemsChanged;
 };

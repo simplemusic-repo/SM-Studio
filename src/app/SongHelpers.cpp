@@ -108,6 +108,23 @@ bool importAudioFile (AppContext& ctx, const juce::File& file, const DropTarget&
     return true;
 }
 
+bool activateBrowserItem (AppContext& ctx, const BrowserItem& item)
+{
+    auto* handler = ctx.registry.findDropHandler (item.kind);
+    if (handler == nullptr)
+        return false;
+
+    DropTarget target;
+    const auto selected = ctx.selection.getSelectedTrack();
+    if (item.kind != "audiofile")
+        target.trackId = selected;
+    const auto idx = ctx.song.indexOfTrack (selected);
+    target.insertIndex = idx >= 0 ? idx + 1 : ctx.song.getNumTracks();
+    target.position = ctx.edit.snapTick (ctx.song.getTempoMap().secondsToTicks (ctx.engine.getPositionSeconds()),
+                                         ctx.song.getTempoMap());
+    return handler->drop (ctx, item, target);
+}
+
 void createDemoSong (AppContext& ctx)
 {
     using namespace commands;

@@ -85,7 +85,7 @@ private:
 class SetTrackParam final : public Command
 {
 public:
-    enum class Param { volumeDb, pan, mute, solo, armed };
+    enum class Param { volumeDb, pan, mute, solo, armed, transpose, velocityOffset };
 
     SetTrackParam (ObjectId id, Param p, float v) : trackId (id), param (p), value (v) {}
 

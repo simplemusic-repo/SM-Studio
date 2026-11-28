@@ -86,6 +86,8 @@ struct Track
 
     juce::String instrumentPluginId; // instrument tracks only
     juce::String instrumentName;
+    int transpose = 0;      // semitones, instrument tracks (applied on playback)
+    int velocityOffset = 0; // -127 .. +127, instrument tracks
 
     std::vector<InsertSlot> inserts;
     std::vector<Region> regions;
