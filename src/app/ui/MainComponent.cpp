@@ -186,12 +186,10 @@ juce::String MainComponent::key (const DockedPanel& p, const char* what) const
 
 void MainComponent::createPanels()
 {
-    // the first registered panel per location is shown; more panels per
-    // location (tabs) can be added later without changing modules
+    // several panels may share a location; only one docked panel per location is visible
     for (auto& info : ctx.registry.getPanels())
     {
-        const bool taken = std::any_of (panels.begin(), panels.end(), [&] (auto& p) { return p.location == info.location; });
-        if (taken || ! info.create)
+        if (! info.create)
             continue;
 
         DockedPanel p;
@@ -205,16 +203,24 @@ void MainComponent::createPanels()
         panels.push_back (std::move (p));
     }
 
+    // at most one visible docked panel per location
+    for (auto& p : panels)
+        if (p.visible && ! p.detached)
+            for (auto& other : panels)
+                if (&other != &p && other.location == p.location && other.visible && ! other.detached)
+                    other.visible = false;
+
     for (auto& p : panels)
     {
         const auto loc = p.location;
-        p.host->onToggleDock = [this, loc] { setPanelDetached (loc, ! isPanelDetached (loc)); };
+        const auto id = p.id;
+        p.host->onToggleDock = [this, id] { setPanelDetached (id, ! isPanelDetached (id)); };
 
         p.resizer = std::make_unique<PanelResizer> (loc);
-        p.resizer->getSize = [this, loc] { auto* dp = findPanel (loc); return dp != nullptr ? dp->size : 0; };
-        p.resizer->setSize = [this, loc] (int newSize)
+        p.resizer->getSize = [this, id] { auto* dp = findPanel (id); return dp != nullptr ? dp->size : 0; };
+        p.resizer->setSize = [this, id, loc] (int newSize)
         {
-            if (auto* dp = findPanel (loc))
+            if (auto* dp = findPanel (id))
             {
                 const auto maxSize = loc == PanelLocation::bottom ? getHeight() - 220 : getWidth() / 2 - 100;
                 dp->size = juce::jlimit (loc == PanelLocation::bottom ? 140 : 180, juce::jmax (200, maxSize), newSize);
@@ -239,10 +245,10 @@ void MainComponent::createPanels()
         a.id = "view.detach." + p.id;
         a.name = p.title + juce::String (" in eigenem Fenster");
         a.menu = "Ansicht";
-        a.menuOrder = 100 + (int) loc;
-        a.separatorBefore = loc == panels.front().location;
-        a.perform = [this, loc] { setPanelDetached (loc, ! isPanelDetached (loc)); };
-        a.isTicked = [this, loc] { return isPanelDetached (loc); };
+        a.menuOrder = 100 + (int) (&p - panels.data());
+        a.separatorBefore = &p == &panels.front();
+        a.perform = [this, id] { setPanelDetached (id, ! isPanelDetached (id)); };
+        a.isTicked = [this, id] { return isPanelDetached (id); };
         a.isEnabled = [this] { return ! headless; };
         ctx.registry.addAction (std::move (a));
     }
@@ -256,8 +262,8 @@ void MainComponent::openWindow (DockedPanel& p, bool restorePosition)
     p.host->setDetached (true);
 
     p.window = std::make_unique<PanelWindow> (p.title, *p.host);
-    const auto loc = p.location;
-    p.window->onClose = [this, loc] { setPanelVisible (loc, false); };
+    const auto id = p.id;
+    p.window->onClose = [this, id] { setPanelVisible (id, false); };
     p.window->onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
 
     const auto saved = ctx.settings.getValue (key (p, "window"));
@@ -283,41 +289,50 @@ void MainComponent::openWindow (DockedPanel& p, bool restorePosition)
     p.window->setVisible (p.visible);
 }
 
-MainComponent::DockedPanel* MainComponent::findPanel (PanelLocation loc)
+MainComponent::DockedPanel* MainComponent::findPanel (const juce::String& id)
 {
     for (auto& p : panels)
-        if (p.location == loc)
+        if (p.id == id)
             return &p;
     return nullptr;
 }
 
-const MainComponent::DockedPanel* MainComponent::findPanel (PanelLocation loc) const
+const MainComponent::DockedPanel* MainComponent::findPanel (const juce::String& id) const
 {
     for (auto& p : panels)
-        if (p.location == loc)
+        if (p.id == id)
             return &p;
     return nullptr;
 }
 
-bool MainComponent::isPanelVisible (PanelLocation loc) const
+bool MainComponent::isPanelVisible (const juce::String& id) const
 {
-    auto* p = findPanel (loc);
+    auto* p = findPanel (id);
     return p != nullptr && p->visible;
 }
 
-bool MainComponent::isPanelDetached (PanelLocation loc) const
+bool MainComponent::isPanelDetached (const juce::String& id) const
 {
-    auto* p = findPanel (loc);
+    auto* p = findPanel (id);
     return p != nullptr && p->detached;
 }
 
-void MainComponent::setPanelVisible (PanelLocation loc, bool shouldBeVisible)
+void MainComponent::setPanelVisible (const juce::String& id, bool shouldBeVisible)
 {
-    auto* p = findPanel (loc);
+    auto* p = findPanel (id);
     if (p == nullptr)
         return;
 
     p->visible = shouldBeVisible;
+
+    // a docked panel replaces the other docked panel at its place (Edit <-> Mix)
+    if (shouldBeVisible && ! p->detached)
+        for (auto& other : panels)
+            if (&other != p && other.location == p->location && other.visible && ! other.detached)
+            {
+                other.visible = false;
+                other.host->setVisible (false);
+            }
 
     if (p->window != nullptr)
     {
@@ -333,9 +348,9 @@ void MainComponent::setPanelVisible (PanelLocation loc, bool shouldBeVisible)
     layoutChanged();
 }
 
-void MainComponent::setPanelDetached (PanelLocation loc, bool shouldDetach)
+void MainComponent::setPanelDetached (const juce::String& id, bool shouldDetach)
 {
-    auto* p = findPanel (loc);
+    auto* p = findPanel (id);
     if (p == nullptr || headless || p->detached == shouldDetach)
         return;
 
@@ -354,6 +369,12 @@ void MainComponent::setPanelDetached (PanelLocation loc, bool shouldDetach)
         p->window.reset();
         p->host->setDetached (false);
         addAndMakeVisible (*p->host);
+        for (auto& other : panels)
+            if (&other != p && other.location == p->location && other.visible && ! other.detached)
+            {
+                other.visible = false;
+                other.host->setVisible (false);
+            }
     }
 
     layoutChanged();
@@ -385,7 +406,7 @@ void MainComponent::saveLayout()
 
 void MainComponent::registerViewActions()
 {
-    auto addToggle = [this] (const char* id, const char* name, int keyCode, PanelLocation loc, int order)
+    auto addToggle = [this] (const char* id, const char* name, int keyCode, const juce::String& panelId, int order)
     {
         ActionInfo a;
         a.id = id;
@@ -393,25 +414,23 @@ void MainComponent::registerViewActions()
         a.menu = "Ansicht";
         a.menuOrder = order;
         a.keys = { juce::KeyPress (keyCode) };
-        a.perform = [this, loc] { setPanelVisible (loc, ! isPanelVisible (loc)); };
-        a.isTicked = [this, loc] { return isPanelVisible (loc); };
+        a.perform = [this, panelId] { setPanelVisible (panelId, ! isPanelVisible (panelId)); };
+        a.isTicked = [this, panelId] { return isPanelVisible (panelId); };
+        a.isEnabled = [this, panelId] { return findPanel (panelId) != nullptr; };
         ctx.registry.addAction (std::move (a));
     };
 
-    addToggle ("view.console", "Konsole", juce::KeyPress::F3Key, PanelLocation::bottom, 10);
-    addToggle ("view.inspector", "Inspector", juce::KeyPress::F4Key, PanelLocation::left, 20);
-    addToggle ("view.browser", "Browser", juce::KeyPress::F5Key, PanelLocation::right, 30);
+    addToggle ("view.editor", "Editor", juce::KeyPress::F2Key, "editor", 5);
+    addToggle ("view.console", "Konsole", juce::KeyPress::F3Key, "console", 10);
+    addToggle ("view.inspector", "Inspector", juce::KeyPress::F4Key, "inspector", 20);
+    addToggle ("view.browser", "Browser", juce::KeyPress::F5Key, "browser", 30);
 
-    ActionInfo editor;
-    editor.id = "view.editor";
-    editor.name = "Editor (folgt)";
-    editor.menu = "Ansicht";
-    editor.menuOrder = 5;
-    editor.keys = { juce::KeyPress (juce::KeyPress::F2Key) };
-    editor.perform = [] {};
-    editor.isEnabled = [] { return false; };
-    editor.isTicked = [] { return false; };
-    ctx.registry.addAction (std::move (editor));
+    // opens the editor without toggling (double-click on a MIDI part)
+    ActionInfo showEditor;
+    showEditor.id = "view.editor.show";
+    showEditor.name = "Editor zeigen";
+    showEditor.perform = [this] { setPanelVisible ("editor", true); };
+    ctx.registry.addAction (std::move (showEditor));
 }
 
 //==============================================================================
@@ -439,6 +458,8 @@ void MainComponent::resized()
         {
             if (p.location != loc || ! p.visible || p.detached)
                 continue;
+            if (! p.host->isVisible())
+                p.host->setVisible (true);
 
             constexpr int grip = 5;
             const auto size = juce::jmin (p.size, (loc == PanelLocation::bottom ? r.getHeight() : r.getWidth()) - 150);

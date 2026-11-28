@@ -186,6 +186,9 @@ public:
     bool perform (Song&) override;
     void undo (Song&) override;
 
+    /** Continuous edits of the same region (e.g. dragging notes) become one undo step. */
+    bool mergeWith (const Command&) override;
+
 private:
     ObjectId from, to;
     Region region;

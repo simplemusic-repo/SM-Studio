@@ -38,7 +38,9 @@ target_sources(SMStudio PRIVATE
     ui/PluginWindows.h
     ui/PluginWindows.cpp
     ui/SettingsWidgets.h
-    ui/SettingsWidgets.cpp)
+    ui/SettingsWidgets.cpp
+    ui/PianoRoll.h
+    ui/PianoRoll.cpp)
 
 target_include_directories(SMStudio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -1321,6 +1321,40 @@ void ArrangeView::mouseDoubleClick (const juce::MouseEvent& e)
         return;
     }
 
+    // double click on a MIDI part: open it in the editor
+    if (auto hit = hitTestEvents (e.getPosition()); hit.region != nullptr)
+    {
+        if (hit.region->kind == Region::Kind::midi)
+        {
+            ctx.selection.setSelectedRegions ({ hit.region->id });
+            if (auto* t = ctx.song.findTrackOfRegion (hit.region->id))
+                ctx.selection.selectTrack (t->id);
+            ctx.registry.invoke ("view.editor.show");
+        }
+        return;
+    }
+    else if (hit.trackId.isValid())
+    {
+        // double click into an empty instrument lane: new MIDI part (one bar), opened in the editor
+        if (auto* track = ctx.song.findTrack (hit.trackId); track != nullptr && track->typeId == "instrument")
+        {
+            const auto& map = ctx.song.getTempoMap();
+            Region r;
+            r.id = ctx.song.newId();
+            r.kind = Region::Kind::midi;
+            r.name = track->name;
+            r.position = std::max<Tick> (0, (xToTick (e.position.x) / map.getTicksPerBar()) * map.getTicksPerBar());
+            r.length = map.getTicksPerBar();
+            const auto id = r.id;
+            if (ctx.perform (std::make_unique<commands::AddRegion> (track->id, std::move (r))))
+            {
+                ctx.selection.setSelectedRegions ({ id });
+                ctx.registry.invoke ("view.editor.show");
+            }
+            return;
+        }
+    }
+
     // double click below the last track: add a track (like Studio One)
     if (e.y > rulerHeight && rowAtY (e.y) >= ctx.song.getNumTracks())
         showAddTrackMenu (nullptr);
