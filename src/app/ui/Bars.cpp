@@ -90,8 +90,7 @@ void Toolbar::valueChanged (juce::Value&)
 
 void Toolbar::paint (juce::Graphics& g)
 {
-    g.setGradientFill (juce::ColourGradient (colours::panelLight, 0, 0, colours::panel, 0, (float) getHeight(), false));
-    g.fillAll();
+    g.fillAll (colours::panel);
 
     // wordmark
     g.setColour (colours::accent);
@@ -255,8 +254,7 @@ void TransportBar::timerCallback()
 
 void TransportBar::paint (juce::Graphics& g)
 {
-    g.setGradientFill (juce::ColourGradient (colours::panelLight, 0, 0, colours::panelDark, 0, (float) getHeight(), false));
-    g.fillAll();
+    g.fillAll (colours::panel);
     g.setColour (colours::border);
     g.drawHorizontalLine (0, 0.0f, (float) getWidth());
 

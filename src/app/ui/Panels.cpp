@@ -1046,9 +1046,21 @@ public:
                                  .translated ((float) ch * ((float) meterArea.getWidth() / 2.0f + 1.0f), 0.0f);
             const auto db = juce::Decibels::gainToDecibels (levels[ch], -60.0f);
             const auto prop = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 66.0f);
-            auto fill = bar.withTop (bar.getBottom() - bar.getHeight() * prop);
-            g.setGradientFill (juce::ColourGradient (colours::play, 0, bar.getBottom(), colours::record, 0, bar.getY(), false));
-            g.fillRect (fill);
+            // flat segments: green up to -12 dB, yellow up to -3 dB, red above
+            auto yFor = [&] (float dB) { return bar.getBottom() - bar.getHeight() * juce::jlimit (0.0f, 1.0f, (dB + 60.0f) / 66.0f); };
+            const auto top = bar.getBottom() - bar.getHeight() * prop;
+            const std::tuple<float, float, juce::Colour> zones[] = {
+                { -60.0f, -12.0f, colours::play }, { -12.0f, -3.0f, colours::solo }, { -3.0f, 6.0f, colours::record }
+            };
+            for (auto& [from, to, colour] : zones)
+            {
+                const auto zoneTop = std::max (top, yFor (to)), zoneBottom = yFor (from);
+                if (zoneTop < zoneBottom)
+                {
+                    g.setColour (colour);
+                    g.fillRect (juce::Rectangle<float>::leftTopRightBottom (bar.getX(), zoneTop, bar.getRight(), zoneBottom));
+                }
+            }
         }
 
         g.setColour (colours::border);

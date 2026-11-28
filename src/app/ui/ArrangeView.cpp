@@ -575,7 +575,7 @@ void ArrangeView::paintRuler (juce::Graphics& g, juce::Rectangle<int> area)
     g.saveState();
     g.reduceClipRegion (area);
 
-    g.setGradientFill (juce::ColourGradient (colours::header, 0, 0, colours::panelLight, 0, (float) area.getBottom(), false));
+    g.setColour (colours::panelLight);
     g.fillRect (area);
 
     // loop range in the upper half

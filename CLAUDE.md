@@ -27,4 +27,6 @@ Den Screenshot nach UI-Änderungen immer ansehen. `docs/screenshot.png` bei sich
 - Neue Core-Logik bekommt Unit-Tests in `tests/`.
 - Kein Code aus Lemon Studio oder anderen GPL-Projekten übernehmen (nur Konzepte nachschlagen).
 - Keine Grafiken, Logos oder Namen von PreSonus/Studio One verwenden.
+- Design: komplett FLACH (Vorbild Ableton) – keine Farbverläufe, keine Schatten, keine Bevel-Effekte,
+  auch nicht bei Symbolen. Farben nur aus `theme::colours` (Farbschemata umschaltbar).
 - Größere Etappen auf eigenem Branch + Pull Request; Roadmap-Häkchen setzen.

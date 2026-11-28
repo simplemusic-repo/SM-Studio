@@ -387,10 +387,8 @@ void LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, cons
     else if (highlighted)
         base = base.brighter (0.12f);
 
-    g.setGradientFill (juce::ColourGradient (base.brighter (0.06f), 0, r.getY(), base.darker (0.08f), 0, r.getBottom(), false));
-    g.fillRoundedRectangle (r, 3.0f);
-    g.setColour (colours::border);
-    g.drawRoundedRectangle (r, 3.0f, 1.0f);
+    g.setColour (base); // flat, no gradient
+    g.fillRoundedRectangle (r, 2.0f);
 }
 
 void LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool)
@@ -454,32 +452,20 @@ void LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int 
         auto cap = juce::Rectangle<float> (capW, faderCapHeight).withCentre ({ cx, pos });
         const bool active = s.isMouseOverOrDragging();
 
-        g.setColour (juce::Colours::black.withAlpha (0.45f));
-        g.fillRoundedRectangle (cap.translated (0.0f, 2.0f), 3.0f);
+        // flat cap (no shadow, no gradient) with thin grip lines and a centre line
+        g.setColour (active ? colours::headerLight.brighter (0.15f) : colours::headerLight);
+        g.fillRoundedRectangle (cap, 2.0f);
 
-        auto body = colours::headerLight.brighter (active ? 0.25f : 0.12f);
-        g.setGradientFill (juce::ColourGradient (body.brighter (0.25f), 0, cap.getY(),
-                                                 body.darker (0.35f), 0, cap.getBottom(), false));
-        g.fillRoundedRectangle (cap, 3.0f);
-
-        // grip ridges above and below the centre line
+        g.setColour (colours::panelDark.withAlpha (0.7f));
         for (int i = 1; i <= 3; ++i)
         {
-            const auto off = (float) i * 4.5f + 2.0f;
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            g.fillRect (cap.getX() + 4.0f, pos - off, capW - 8.0f, 1.0f);
-            g.fillRect (cap.getX() + 4.0f, pos + off, capW - 8.0f, 1.0f);
-            g.setColour (juce::Colours::white.withAlpha (0.12f));
-            g.fillRect (cap.getX() + 4.0f, pos - off + 1.0f, capW - 8.0f, 1.0f);
-            g.fillRect (cap.getX() + 4.0f, pos + off + 1.0f, capW - 8.0f, 1.0f);
+            const auto off = (float) i * 5.0f + 2.0f;
+            g.fillRect (cap.getX() + 5.0f, pos - off, capW - 10.0f, 1.0f);
+            g.fillRect (cap.getX() + 5.0f, pos + off, capW - 10.0f, 1.0f);
         }
 
-        // centre line marks the exact value
-        g.setColour (active ? colours::accent.brighter (0.3f) : juce::Colours::white.withAlpha (0.9f));
+        g.setColour (active ? colours::accent : colours::text);
         g.fillRect (cap.getX() + 2.0f, pos - 1.0f, capW - 4.0f, 2.0f);
-
-        g.setColour (colours::border);
-        g.drawRoundedRectangle (cap, 3.0f, 1.0f);
     }
     else
     {
@@ -536,6 +522,34 @@ void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int 
     g.setColour (colours::text);
     g.drawLine (juce::Line<float> (centre, centre.getPointOnCircumference (radius - 3, angle)), 1.5f);
 }
+
+int LookAndFeel::getTabButtonBestWidth (juce::TabBarButton& b, int depth)
+{
+    return juce::jmax (depth * 2, (int) juce::GlyphArrangement::getStringWidth (juce::Font (font (14.0f)), b.getButtonText()) + 28);
+}
+
+void LookAndFeel::drawTabButton (juce::TabBarButton& b, juce::Graphics& g, bool isMouseOver, bool)
+{
+    const bool active = b.isFrontTab();
+    auto r = b.getActiveArea().toFloat();
+    g.setColour (active ? colours::panel : (isMouseOver ? colours::panelLight : colours::panelDark));
+    g.fillRect (r);
+    if (active)
+    {
+        g.setColour (colours::accent);
+        g.fillRect (r.removeFromBottom (2.0f));
+    }
+    g.setColour (active ? colours::text : colours::textDim);
+    g.setFont (font (14.0f));
+    g.drawText (b.getButtonText(), b.getTextArea(), juce::Justification::centred, true);
+}
+
+void LookAndFeel::drawTabbedButtonBarBackground (juce::TabbedButtonBar&, juce::Graphics& g)
+{
+    g.fillAll (colours::panelDark);
+}
+
+void LookAndFeel::drawTabAreaBehindFrontButton (juce::TabbedButtonBar&, juce::Graphics&, int, int) {}
 
 void LookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box)
 {
@@ -623,10 +637,8 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
         else if (highlighted)
             base = base.brighter (0.12f);
 
-        g.setGradientFill (juce::ColourGradient (base.brighter (0.07f), 0, r.getY(), base.darker (0.1f), 0, r.getBottom(), false));
-        g.fillRoundedRectangle (r, 3.0f);
-        g.setColour (colours::border);
-        g.drawRoundedRectangle (r, 3.0f, 1.0f);
+        g.setColour (base); // flat
+        g.fillRoundedRectangle (r, 2.0f);
     }
     else if (highlighted || down)
     {
@@ -691,7 +703,7 @@ void makeValueLabel (juce::Label& l, float fontHeight)
 //==============================================================================
 void drawPanelHeader (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title)
 {
-    g.setGradientFill (juce::ColourGradient (colours::header, 0, (float) area.getY(), colours::panelLight, 0, (float) area.getBottom(), false));
+    g.setColour (colours::header); // flat
     g.fillRect (area);
     g.setColour (colours::border);
     g.drawHorizontalLine (area.getBottom() - 1, (float) area.getX(), (float) area.getRight());
