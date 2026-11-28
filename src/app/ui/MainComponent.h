@@ -36,11 +36,14 @@ public:
     juce::PopupMenu getMenuForIndex (int index, const juce::String& name) override;
     void menuItemSelected (int itemId, int topLevelIndex) override;
 
-    bool isPanelVisible (PanelLocation) const;
-    void setPanelVisible (PanelLocation, bool);
+    /** Panels are addressed by their id ("inspector", "browser", "console", "editor").
+        Several panels may share a location (e.g. Editor and Konsole at the
+        bottom): showing a docked one hides the others there. */
+    bool isPanelVisible (const juce::String& id) const;
+    void setPanelVisible (const juce::String& id, bool);
 
-    bool isPanelDetached (PanelLocation) const;
-    void setPanelDetached (PanelLocation, bool);
+    bool isPanelDetached (const juce::String& id) const;
+    void setPanelDetached (const juce::String& id, bool);
 
     /** Writes panel visibility, docking state and window positions to the settings. */
     void saveLayout();
@@ -65,8 +68,8 @@ private:
     void historyChanged() override { menuItemsChanged(); }
     void registerViewActions();
     void createPanels();
-    DockedPanel* findPanel (PanelLocation);
-    const DockedPanel* findPanel (PanelLocation) const;
+    DockedPanel* findPanel (const juce::String& id);
+    const DockedPanel* findPanel (const juce::String& id) const;
     void openWindow (DockedPanel&, bool restorePosition);
     void layoutChanged();
     juce::String key (const DockedPanel&, const char* what) const;

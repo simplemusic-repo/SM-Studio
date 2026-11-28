@@ -33,6 +33,8 @@ struct Note
     Tick length = ticksPerQuarter;
     int pitch = 60;       // MIDI note number
     float velocity = 0.8f; // 0..1
+
+    bool operator== (const Note&) const = default;
 };
 
 /** An event on a track's timeline (Studio One calls these "events").
@@ -58,6 +60,14 @@ struct Region
     std::vector<Note> notes;
 
     Tick getEnd() const noexcept { return position + length; }
+
+    const Note* findNote (ObjectId noteId) const
+    {
+        for (auto& n : notes)
+            if (n.id == noteId)
+                return &n;
+        return nullptr;
+    }
 };
 
 /** A plug-in instance in a track's insert chain. pluginId is the identifier

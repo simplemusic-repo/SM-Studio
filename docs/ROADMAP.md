@@ -49,8 +49,13 @@ Grobe Etappen bis zu einer brauchbaren Version. Eine Etappe ≈ 1–3 Arbeitssit
       Plug-in-Parameter-Automation (Etappe 6), Inserts per Drag & Drop umsortieren
 
 ## Etappe 4 – Piano Roll
+- [x] Editor unten (F2, Doppelklick auf einen MIDI-Part), wechselt sich mit der Konsole (F3) ab
+- [x] Noten setzen (Doppelklick / Stift), verschieben (Raster, Alt = frei, Strg = kopieren), Länge ändern,
+      löschen (Doppelklick, Entf, Radiergummi), Gummiband-Auswahl, Pfeiltasten (Umschalt = Oktave)
+- [x] Anschlag-Spur (Velocity) unten, Klaviatur zum Vorhören, Quantisieren (Q) mit eigenem Raster
+- [x] Zoom: Strg+Rad horizontal, Alt+Rad Notenhöhe
 - [ ] Arpeggiator und MIDI-Effekte im Inspector
-- [ ] Editor unten (F2), Noten zeichnen/verschieben/löschen, Velocity, Quantisieren
+- [x] Neuer MIDI-Part: Stift im Arrangement oder Doppelklick in eine leere Instrumentenspur (öffnet den Editor)
 
 ## Etappe 5 – Konsole
 - [ ] Busse, Sends, Ausgänge, Pegelanzeigen pro Kanal

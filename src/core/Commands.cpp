@@ -284,14 +284,9 @@ bool UpdateRegion::perform (Song& s)
 
     if (from == to && current->position == region.position && current->length == region.length
         && current->muted == region.muted && current->sourceOffsetSamples == region.sourceOffsetSamples
-        && current->notes.size() == region.notes.size() && current->name == region.name)
-    {
-        bool sameNotes = true;
-        for (size_t i = 0; i < region.notes.size(); ++i)
-            sameNotes = sameNotes && current->notes[i].start == region.notes[i].start;
-        if (sameNotes)
-            return false;
-    }
+        && current->name == region.name && juce::exactlyEqual (current->gainDb, region.gainDb)
+        && current->notes == region.notes)
+        return false; // nothing changed
 
     s.modifyTrack (from, [this] (Track& t)
     {
@@ -313,6 +308,17 @@ bool UpdateRegion::perform (Song& s)
         t.regions.insert (t.regions.begin() + (std::ptrdiff_t) i, region);
     }, SongChange::What::regionsChanged);
 
+    return true;
+}
+
+bool UpdateRegion::mergeWith (const Command& next)
+{
+    auto* n = dynamic_cast<const UpdateRegion*> (&next);
+    if (n == nullptr || n->region.id != region.id || n->from != to || n->to != to || from != to
+        || n->commandName != commandName)
+        return false;
+
+    region = n->region; // keep our "old" state for undo, take the newest state for redo
     return true;
 }
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "core/Commands.h"
+#include "core/NoteOps.h"
 
 namespace sms
 {
@@ -299,5 +300,102 @@ public:
 };
 
 static ValueFormatTests valueFormatTests;
+
+//==============================================================================
+class NoteOpsTests final : public juce::UnitTest
+{
+public:
+    NoteOpsTests() : juce::UnitTest ("Note editing", "SMStudio") {}
+
+    void runTest() override
+    {
+        using namespace noteops;
+        std::vector<Note> notes {
+            { ObjectId { 1 }, 0,   480, 60, 0.8f },
+            { ObjectId { 2 }, 250, 240, 64, 0.5f },
+            { ObjectId { 3 }, 970, 100, 67, 0.7f },
+        };
+
+        beginTest ("move: time and pitch, clamped, sorted");
+        {
+            auto r = move (notes, { ObjectId { 1 } }, 1000, 70);
+            expectEquals ((int) r.back().id.value, 1);
+            expectEquals ((int) r.back().start, 1000);
+            expectEquals (r.back().pitch, 127);
+            r = move (notes, { ObjectId { 2 } }, -1000, -100);
+            expectEquals ((int) r.front().start, 0);
+            expect (r.front().pitch == 0 || r[1].pitch == 0);
+        }
+
+        beginTest ("resize keeps a minimum length");
+        {
+            auto r = resize (notes, { ObjectId { 3 } }, -500, 30);
+            expectEquals ((int) r[2].length, 30);
+            r = resize (notes, { ObjectId { 3 } }, 140, 30);
+            expectEquals ((int) r[2].length, 240);
+        }
+
+        beginTest ("quantize snaps starts in song time");
+        {
+            // region at 100 ticks, 1/16 grid (240): absolute 100, 350, 1070 -> 0, 240(=480? no: 350->240), 960
+            auto r = quantize (notes, {}, 100, 240);
+            expectEquals ((int) r[0].start, -100 + 100);   // 100 -> 0 abs -> clamped start 0
+            expectEquals ((int) r[1].start, 240 - 100);    // 350 -> 240
+            expectEquals ((int) r[2].start, 960 - 100);    // 1070 -> 960
+            expectEquals ((int) r[2].length, 100, "length kept");
+
+            auto half = quantize (notes, { ObjectId { 3 } }, 0, 240, 0.5f); // 970 -> 960: half way = 965
+            expectEquals ((int) half[2].start, 965);
+            expectEquals ((int) half[1].start, 250, "others untouched");
+        }
+
+        beginTest ("velocity and remove");
+        {
+            auto r = setVelocity (notes, { ObjectId { 1 }, ObjectId { 2 } }, 2.0f);
+            expectEquals (r[0].velocity, 1.0f);
+            expectEquals (r[2].velocity, 0.7f);
+            r = remove (notes, { ObjectId { 2 } });
+            expectEquals ((int) r.size(), 2);
+        }
+
+        beginTest ("snap helpers");
+        expectEquals ((int) snap (350, 240), 480 - 240);
+        expectEquals ((int) snap (370, 240), 480);
+        expectEquals ((int) snapDown (479, 240), 240);
+        expectEquals ((int) snap (123, 0), 123);
+
+        beginTest ("note edits merge into one undo step and change pitch/velocity");
+        {
+            Song song;
+            CommandHistory history { song };
+            Track t;
+            t.id = song.newId();
+            t.typeId = "instrument";
+            const auto tid = t.id;
+            history.perform (std::make_unique<commands::AddTrack> (std::move (t)));
+            Region r;
+            r.id = song.newId();
+            r.kind = Region::Kind::midi;
+            r.length = 3840;
+            r.notes = notes;
+            history.perform (std::make_unique<commands::AddRegion> (tid, r));
+
+            for (int step = 1; step <= 5; ++step)
+            {
+                auto edited = r;
+                edited.notes = move (r.notes, { ObjectId { 1 } }, 0, step); // pitch only
+                expect (history.perform (std::make_unique<commands::UpdateRegion> (tid, tid, edited, "Noten verschieben"), true),
+                        "pitch-only change is applied");
+            }
+            history.endGesture();
+            expectEquals (song.findTrack (tid)->findRegion (r.id)->notes[0].pitch, 65);
+
+            history.undo();
+            expectEquals (song.findTrack (tid)->findRegion (r.id)->notes[0].pitch, 60, "one undo restores the drag start");
+        }
+    }
+};
+
+static NoteOpsTests noteOpsTests;
 
 } // namespace sms

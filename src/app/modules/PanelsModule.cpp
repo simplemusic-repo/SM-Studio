@@ -5,6 +5,7 @@
 
 #include "extension/ExtensionRegistry.h"
 #include "ui/Panels.h"
+#include "ui/PianoRoll.h"
 
 namespace sms
 {
@@ -26,6 +27,10 @@ namespace
 
             reg.addPanel ({ "browser", "Browser", PanelLocation::right, 300, true,
                             [] (AppContext& c) { return std::make_unique<BrowserPanel> (c); } });
+
+            // Editor (F2) and Konsole (F3) share the bottom: showing one hides the other
+            reg.addPanel ({ "editor", "Editor", PanelLocation::bottom, 380, false,
+                            [] (AppContext& c) { return std::make_unique<PianoRollPanel> (c); } });
 
             reg.addPanel ({ "console", "Konsole", PanelLocation::bottom, 460, false,
                             [] (AppContext& c) { return std::make_unique<ConsolePanel> (c); } });

@@ -345,9 +345,7 @@ private:
 
             for (auto& p : juce::StringArray::fromTokens (show, ",", ""))
             {
-                if (p == "console")   comp.setPanelVisible (PanelLocation::bottom, true);
-                if (p == "inspector") comp.setPanelVisible (PanelLocation::left, true);
-                if (p == "browser")   comp.setPanelVisible (PanelLocation::right, true);
+                comp.setPanelVisible (p, true);
             }
 
             state->engine.setPositionSeconds (state->song.getTempoMap().ticksToSeconds (state->song.getTempoMap().getTicksPerBar() * 5 + 960));
